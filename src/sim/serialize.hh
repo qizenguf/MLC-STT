@@ -59,14 +59,12 @@
 #include <vector>
 
 #include "base/bitunion.hh"
-#include "base/types.hh"
 
+class CheckpointIn;
 class IniFile;
 class Serializable;
-class CheckpointIn;
 class SimObject;
 class SimObjectResolver;
-class EventQueue;
 
 typedef std::ostream CheckpointOut;
 
@@ -359,6 +357,8 @@ class CheckpointIn
     bool findObj(const std::string &section, const std::string &entry,
                  SimObject *&value);
 
+
+    bool entryExists(const std::string &section, const std::string &entry);
     bool sectionExists(const std::string &section);
 
     // The following static functions have to do with checkpoint

@@ -29,12 +29,14 @@
  */
 
 #include "arch/sparc/solaris/process.hh"
+
 #include "arch/sparc/isa_traits.hh"
 #include "arch/sparc/registers.hh"
 #include "base/trace.hh"
 #include "cpu/thread_context.hh"
 #include "kern/solaris/solaris.hh"
 #include "sim/process.hh"
+#include "sim/syscall_desc.hh"
 #include "sim/syscall_emul.hh"
 
 using namespace std;

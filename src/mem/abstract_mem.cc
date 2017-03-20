@@ -42,13 +42,14 @@
  *          Andreas Hansson
  */
 
+#include "mem/abstract_mem.hh"
+
 #include <vector>
 
 #include "cpu/base.hh"
 #include "cpu/thread_context.hh"
 #include "debug/LLSC.hh"
 #include "debug/MemoryAccess.hh"
-#include "mem/abstract_mem.hh"
 #include "mem/packet_access.hh"
 #include "sim/system.hh"
 
@@ -57,7 +58,7 @@ using namespace std;
 AbstractMemory::AbstractMemory(const Params *p) :
     MemObject(p), range(params()->range), pmemAddr(NULL),
     confTableReported(p->conf_table_reported), inAddrMap(p->in_addr_map),
-    _system(NULL)
+    kvmMap(p->kvm_map), _system(NULL)
 {
 }
 
@@ -406,7 +407,7 @@ AbstractMemory::access(PacketPtr pkt)
         if (writeOK(pkt)) {
             if (pmemAddr) {
                 memcpy(hostAddr, pkt->getConstPtr<uint8_t>(), pkt->getSize());
-                DPRINTF(MemoryAccess, "%s wrote %x bytes to address %x\n",
+                DPRINTF(MemoryAccess, "%s wrote %i bytes to address %x\n",
                         __func__, pkt->getSize(), pkt->getAddr());
             }
             assert(!pkt->req->isInstFetch());

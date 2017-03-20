@@ -325,8 +325,17 @@ Cache::access(PacketPtr pkt, CacheBlk *&blk, Cycles &lat,
         blk = nullptr;
         // lookupLatency is the latency in case the request is uncacheable.
         lat = lookupLatency;
-        return false;
-    }
+        // Update latency decided by if it is read or write
+		if(pkt->isWrite()) {
+			lat = writeLatency;
+		}
+		return false;
+	}
+
+		// Update latency decided by if it is read or write
+		if(pkt->isWrite()) {
+		lat = writeLatency;
+		}
 
     ContextID id = pkt->req->hasContextId() ?
         pkt->req->contextId() : InvalidContextID;
@@ -396,7 +405,7 @@ Cache::access(PacketPtr pkt, CacheBlk *&blk, Cycles &lat,
 
         if (blk == nullptr) {
             // need to do a replacement
-            blk = allocateBlock(pkt->getAddr(), pkt->isSecure(), writebacks);
+            blk = allocateBlock(pkt->getAddr(), pkt->isSecure(), writebacks, pkt); // modified
             if (blk == nullptr) {
                 // no replaceable block available: give up, fwd to next level.
                 incMissCount(pkt);
@@ -1656,9 +1665,9 @@ Cache::invalidateVisitor(CacheBlk &blk)
 }
 
 CacheBlk*
-Cache::allocateBlock(Addr addr, bool is_secure, PacketList &writebacks)
+Cache::allocateBlock(Addr addr, bool is_secure, PacketList &writebacks, PacketPtr pkt)
 {
-    CacheBlk *blk = tags->findVictim(addr);
+    CacheBlk *blk = tags->findVictim(addr, pkt);
 
     // It is valid to return nullptr if there is no victim
     if (!blk)
@@ -1725,7 +1734,7 @@ Cache::handleFill(PacketPtr pkt, CacheBlk *blk, PacketList &writebacks,
     // When handling a fill, we should have no writes to this line.
     assert(addr == blockAlign(addr));
     assert(!writeBuffer.findMatch(addr, is_secure));
-
+	
     if (blk == nullptr) {
         // better have read new data...
         assert(pkt->hasData());
@@ -1734,10 +1743,10 @@ Cache::handleFill(PacketPtr pkt, CacheBlk *blk, PacketList &writebacks,
         // note that we don't write the data here for write-line - that
         // happens in the subsequent satisfyCpuSideRequest.
         assert(pkt->isRead() || pkt->cmd == MemCmd::WriteLineReq);
-
+        //tags->storeTempPkt(pkt);
         // need to do a replacement if allocating, otherwise we stick
         // with the temporary storage
-        blk = allocate ? allocateBlock(addr, is_secure, writebacks) : nullptr;
+        blk = allocate ? allocateBlock(addr, is_secure, writebacks, pkt) : nullptr;
 
         if (blk == nullptr) {
             // No replaceable block or a mostly exclusive

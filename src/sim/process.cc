@@ -43,34 +43,32 @@
  *          Ali Saidi
  */
 
+#include "sim/process.hh"
+
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <cstdio>
+#include <array>
 #include <map>
 #include <string>
+#include <vector>
 
+#include "base/intmath.hh"
 #include "base/loader/object_file.hh"
 #include "base/loader/symtab.hh"
-#include "base/intmath.hh"
 #include "base/statistics.hh"
 #include "config/the_isa.hh"
 #include "cpu/thread_context.hh"
 #include "mem/page_table.hh"
-#include "mem/multi_level_page_table.hh"
 #include "mem/se_translating_port_proxy.hh"
 #include "params/LiveProcess.hh"
 #include "params/Process.hh"
-#include "sim/debug.hh"
-#include "sim/process.hh"
-#include "sim/process_impl.hh"
-#include "sim/stats.hh"
-#include "sim/syscall_emul.hh"
+#include "sim/emul_driver.hh"
+#include "sim/syscall_desc.hh"
 #include "sim/system.hh"
 
 #if THE_ISA == ALPHA_ISA
 #include "arch/alpha/linux/process.hh"
-#include "arch/alpha/tru64/process.hh"
 #elif THE_ISA == SPARC_ISA
 #include "arch/sparc/linux/process.hh"
 #include "arch/sparc/solaris/process.hh"
@@ -83,6 +81,8 @@
 #include "arch/x86/linux/process.hh"
 #elif THE_ISA == POWER_ISA
 #include "arch/power/linux/process.hh"
+#elif THE_ISA == RISCV_ISA
+#include "arch/riscv/linux/process.hh"
 #else
 #error "THE_ISA not set"
 #endif
@@ -131,12 +131,12 @@ Process::Process(ProcessParams * params)
       brk_point(0), stack_base(0), stack_size(0), stack_min(0),
       max_stack_size(params->max_stack_size),
       next_thread_stack_base(0),
-      M5_pid(system->allocatePID()),
       useArchPT(params->useArchPT),
       kvmInSE(params->kvmInSE),
       pTable(useArchPT ?
-        static_cast<PageTableBase *>(new ArchPageTable(name(), M5_pid, system)) :
-        static_cast<PageTableBase *>(new FuncPageTable(name(), M5_pid)) ),
+        static_cast<PageTableBase *>(new ArchPageTable(name(), params->pid,
+            system)) :
+        static_cast<PageTableBase *>(new FuncPageTable(name(), params->pid))),
       initVirtMem(system->getSystemPort(), this,
                   SETranslatingPortProxy::Always),
       fd_array(make_shared<array<FDEntry, NUM_FDS>>()),
@@ -147,7 +147,10 @@ Process::Process(ProcessParams * params)
             {"cout",   STDOUT_FILENO},
             {"stdout", STDOUT_FILENO},
             {"cerr",   STDERR_FILENO},
-            {"stderr", STDERR_FILENO}}
+            {"stderr", STDERR_FILENO}},
+      _uid(params->uid), _euid(params->euid),
+      _gid(params->gid), _egid(params->egid),
+      _pid(params->pid), _ppid(params->ppid)
 {
     int sim_fd;
     std::map<string,int>::iterator it;
@@ -335,6 +338,18 @@ Process::fixFileOffsets()
     // Search through the input options and set fd if match is found;
     // otherwise, open an input file and seek to location.
     FDEntry *fde_stdin = getFDEntry(STDIN_FILENO);
+
+    // Check if user has specified a different input file, and if so, use it
+    // instead of the file specified in the checkpoint. This also resets the
+    // file offset from the checkpointed value
+    string new_in = ((ProcessParams*)params())->input;
+    if (new_in != fde_stdin->filename) {
+        warn("Using new input file (%s) rather than checkpointed (%s)\n",
+             new_in, fde_stdin->filename);
+        fde_stdin->filename = new_in;
+        fde_stdin->fileOffset = 0;
+    }
+
     if ((it = imap.find(fde_stdin->filename)) != imap.end()) {
         fde_stdin->fd = it->second;
     } else {
@@ -345,6 +360,18 @@ Process::fixFileOffsets()
     // Search through the output/error options and set fd if match is found;
     // otherwise, open an output file and seek to location.
     FDEntry *fde_stdout = getFDEntry(STDOUT_FILENO);
+
+    // Check if user has specified a different output file, and if so, use it
+    // instead of the file specified in the checkpoint. This also resets the
+    // file offset from the checkpointed value
+    string new_out = ((ProcessParams*)params())->output;
+    if (new_out != fde_stdout->filename) {
+        warn("Using new output file (%s) rather than checkpointed (%s)\n",
+             new_out, fde_stdout->filename);
+        fde_stdout->filename = new_out;
+        fde_stdout->fileOffset = 0;
+    }
+
     if ((it = oemap.find(fde_stdout->filename)) != oemap.end()) {
         fde_stdout->fd = it->second;
     } else {
@@ -353,6 +380,18 @@ Process::fixFileOffsets()
     }
 
     FDEntry *fde_stderr = getFDEntry(STDERR_FILENO);
+
+    // Check if user has specified a different error file, and if so, use it
+    // instead of the file specified in the checkpoint. This also resets the
+    // file offset from the checkpointed value
+    string new_err = ((ProcessParams*)params())->errout;
+    if (new_err != fde_stderr->filename) {
+        warn("Using new error file (%s) rather than checkpointed (%s)\n",
+             new_err, fde_stderr->filename);
+        fde_stderr->filename = new_err;
+        fde_stderr->fileOffset = 0;
+    }
+
     if (fde_stdout->filename == fde_stderr->filename) {
         // Reuse the same file descriptor if these match.
         fde_stderr->fd = fde_stdout->fd;
@@ -421,7 +460,6 @@ Process::serialize(CheckpointOut &cp) const
     for (int x = 0; x < fd_array->size(); x++) {
         (*fd_array)[x].serializeSection(cp, csprintf("FDEntry%d", x));
     }
-    SERIALIZE_SCALAR(M5_pid);
 
 }
 
@@ -442,7 +480,6 @@ Process::unserialize(CheckpointIn &cp)
         fde->unserializeSection(cp, csprintf("FDEntry%d", x));
     }
     fixFileOffsets();
-    UNSERIALIZE_OPT_SCALAR(M5_pid);
     // The above returns a bool so that you could do something if you don't
     // find the param in the checkpoint if you wanted to, like set a default
     // but in this case we'll just stick with the instantiated value if not
@@ -470,9 +507,6 @@ LiveProcess::LiveProcess(LiveProcessParams *params, ObjectFile *_objFile)
     : Process(params), objFile(_objFile),
       argv(params->cmd), envp(params->env), cwd(params->cwd),
       executable(params->executable),
-      __uid(params->uid), __euid(params->euid),
-      __gid(params->gid), __egid(params->egid),
-      __pid(params->pid), __ppid(params->ppid),
       drivers(params->drivers)
 {
 
@@ -591,10 +625,6 @@ LiveProcess::create(LiveProcessParams * params)
         fatal("Object file architecture does not match compiled ISA (Alpha).");
 
     switch (objFile->getOpSys()) {
-      case ObjectFile::Tru64:
-        process = new AlphaTru64Process(params, objFile);
-        break;
-
       case ObjectFile::UnknownOpSys:
         warn("Unknown operating system; assuming Linux.");
         // fall through
@@ -706,6 +736,19 @@ LiveProcess::create(LiveProcessParams * params)
         process = new PowerLinuxProcess(params, objFile);
         break;
 
+      default:
+        fatal("Unknown/unsupported operating system.");
+    }
+#elif THE_ISA == RISCV_ISA
+    if (objFile->getArch() != ObjectFile::Riscv)
+        fatal("Object file architecture does not match compiled ISA (RISCV).");
+    switch (objFile->getOpSys()) {
+      case ObjectFile::UnknownOpSys:
+        warn("Unknown operating system; assuming Linux.");
+        // fall through
+      case ObjectFile::Linux:
+        process = new RiscvLinuxProcess(params, objFile);
+        break;
       default:
         fatal("Unknown/unsupported operating system.");
     }

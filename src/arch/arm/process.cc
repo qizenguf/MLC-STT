@@ -41,8 +41,9 @@
  *          Ali Saidi
  */
 
-#include "arch/arm/isa_traits.hh"
 #include "arch/arm/process.hh"
+
+#include "arch/arm/isa_traits.hh"
 #include "arch/arm/types.hh"
 #include "base/loader/elf_object.hh"
 #include "base/loader/object_file.hh"
@@ -52,6 +53,7 @@
 #include "mem/page_table.hh"
 #include "sim/byteswap.hh"
 #include "sim/process_impl.hh"
+#include "sim/syscall_return.hh"
 #include "sim/system.hh"
 
 using namespace std;

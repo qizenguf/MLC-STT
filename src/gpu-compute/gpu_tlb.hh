@@ -68,7 +68,7 @@ namespace X86ISA
         GpuTlbEntry(Addr asn, Addr _vaddr, Addr _paddr, bool _valid)
           : TlbEntry(asn, _vaddr, _paddr, false, false), valid(_valid) { }
 
-        GpuTlbEntry() : TlbEntry() { }
+        GpuTlbEntry() : TlbEntry(), valid(false) { }
 
         bool valid;
     };
@@ -170,7 +170,7 @@ namespace X86ISA
          */
         bool accessDistance;
 
-        GpuTlbEntry *tlb;
+        std::vector<GpuTlbEntry> tlb;
 
         /*
          * It's a per-set list. As long as we have not reached

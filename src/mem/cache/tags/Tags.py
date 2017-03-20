@@ -66,6 +66,26 @@ class LRU(BaseSetAssoc):
     cxx_class = 'LRU'
     cxx_header = "mem/cache/tags/lru.hh"
 
+class CAR(BaseSetAssoc):
+    type = 'CAR'
+    cxx_class = 'CAR'
+    cxx_header = "mem/cache/tags/car.hh"
+    #shifSize = Param.Int(Parent.shift_size, "shift size in bytes")
+    #flipSize = Param.Int(Parent.flip_size, "flip size in bytes")
+    #encodingSize = Param.Int(Parent.encoding_size, "encoding size in bytes")
+    #thres = Param.Int(Parent.encoding_threshold, "encoding threshold out of 64 ")
+
+class MLC(BaseSetAssoc):
+    type = 'MLC'
+    cxx_class = 'MLC'
+    cxx_header = "mem/cache/tags/mlc.hh"
+    #shifSize = Param.Int(Parent.shift_size, "shift size in bytes")
+    flipSize = Param.Int(4, "flip size in bytes")
+    encodingSize = Param.Int(4, "encoding size in bytes")
+    loc_weight = Param.Int(0, "location weight")
+    diverse_weight = Param.Float(5.8, "diverse weight")
+    thres = Param.Int(12, "encoding threshold out of 64 ")
+
 class RandomRepl(BaseSetAssoc):
     type = 'RandomRepl'
     cxx_class = 'RandomRepl'

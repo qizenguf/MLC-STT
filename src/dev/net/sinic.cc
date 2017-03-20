@@ -1085,6 +1085,7 @@ Device::txKick()
 
       case txCopyDone:
         vnic->TxDone = txDmaLen | Regs::TxDone_Complete;
+        txPacket->simLength += txDmaLen;
         txPacket->length += txDmaLen;
         if ((vnic->TxData & Regs::TxData_More)) {
             txPacketOffset += txDmaLen;

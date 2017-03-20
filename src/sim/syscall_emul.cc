@@ -29,10 +29,11 @@
  *          Ali Saidi
  */
 
+#include "sim/syscall_emul.hh"
+
 #include <fcntl.h>
 #include <unistd.h>
 
-#include <cstdio>
 #include <iostream>
 #include <string>
 
@@ -40,59 +41,22 @@
 #include "base/chunk_generator.hh"
 #include "base/trace.hh"
 #include "config/the_isa.hh"
-#include "cpu/base.hh"
 #include "cpu/thread_context.hh"
-#include "debug/SyscallBase.hh"
-#include "debug/SyscallVerbose.hh"
 #include "mem/page_table.hh"
 #include "sim/process.hh"
 #include "sim/sim_exit.hh"
-#include "sim/syscall_emul.hh"
+#include "sim/syscall_debug_macros.hh"
+#include "sim/syscall_desc.hh"
 #include "sim/system.hh"
 
 using namespace std;
 using namespace TheISA;
 
-void
-SyscallDesc::doSyscall(int callnum, LiveProcess *process, ThreadContext *tc)
-{
-    if (DTRACE(SyscallBase)) {
-        int index = 0;
-        IntReg arg[6] M5_VAR_USED;
-
-        // we can't just put the calls to getSyscallArg() in the
-        // DPRINTF arg list, because C++ doesn't guarantee their order
-        for (int i = 0; i < 6; ++i)
-            arg[i] = process->getSyscallArg(tc, index);
-
-        // Linux supports up to six system call arguments through registers
-        // so we want to print all six. Check to the relevant man page to
-        // verify how many are actually used by a given system call.
-        DPRINTF_SYSCALL(Base,
-                        "%s called w/arguments %d, %d, %d, %d, %d, %d\n",
-                        name, arg[0], arg[1], arg[2], arg[3], arg[4],
-                        arg[5]);
-    }
-
-    SyscallReturn retval = (*funcPtr)(this, callnum, process, tc);
-
-    if (retval.needsRetry()) {
-        DPRINTF_SYSCALL(Base, "%s needs retry\n", name);
-    } else {
-        DPRINTF_SYSCALL(Base, "%s returns %d\n", name,
-                        retval.encodedValue());
-    }
-
-    if (!(flags & SyscallDesc::SuppressReturnValue) && !retval.needsRetry())
-        process->setSyscallReturn(tc, retval);
-}
-
-
 SyscallReturn
 unimplementedFunc(SyscallDesc *desc, int callnum, LiveProcess *process,
                   ThreadContext *tc)
 {
-    fatal("syscall %s (#%d) unimplemented.", desc->name, callnum);
+    fatal("syscall %s (#%d) unimplemented.", desc->name(), callnum);
 
     return 1;
 }
@@ -102,19 +66,10 @@ SyscallReturn
 ignoreFunc(SyscallDesc *desc, int callnum, LiveProcess *process,
            ThreadContext *tc)
 {
-    int index = 0;
-    const char *extra_text = "";
-
-    if (desc->warnOnce()) {
-        if (desc->warned)
-            return 0;
-
-        desc->warned = true;
-        extra_text = "\n      (further warnings will be suppressed)";
+    if (desc->needWarning()) {
+        warn("ignoring syscall %s(...)%s", desc->name(), desc->warnOnce() ?
+             "\n      (further warnings will be suppressed)" : "");
     }
-
-    warn("ignoring syscall %s(%d, ...)%s", desc->name,
-         process->getSyscallArg(tc, index), extra_text);
 
     return 0;
 }
@@ -245,7 +200,7 @@ readFunc(SyscallDesc *desc, int num, LiveProcess *p, ThreadContext *tc)
 
     int bytes_read = read(sim_fd, bufArg.bufferPtr(), nbytes);
 
-    if (bytes_read != -1)
+    if (bytes_read > 0)
         bufArg.copyOut(tc->getMemProxy());
 
     return bytes_read;
@@ -932,6 +887,30 @@ cloneFunc(SyscallDesc *desc, int callnum, LiveProcess *process,
         fatal("Called sys_clone, but no unallocated thread contexts found!\n");
         return 0;
     }
+}
+
+SyscallReturn
+fallocateFunc(SyscallDesc *desc, int callnum, LiveProcess *process,
+              ThreadContext *tc)
+{
+#if NO_FALLOCATE
+    warn("Host OS cannot support calls to fallocate. Ignoring syscall");
+#else
+    int index = 0;
+    int tgt_fd = process->getSyscallArg(tc, index);
+    int mode = process->getSyscallArg(tc, index);
+    off_t offset = process->getSyscallArg(tc, index);
+    off_t len = process->getSyscallArg(tc, index);
+
+    int sim_fd = process->getSimFD(tgt_fd);
+    if (sim_fd < 0)
+        return -EBADF;
+
+    int result = fallocate(sim_fd, mode, offset, len);
+    if (result < 0)
+        return -errno;
+#endif
+    return 0;
 }
 
 SyscallReturn

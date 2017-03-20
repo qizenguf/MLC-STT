@@ -159,6 +159,8 @@ class Vector2dInfoProxy : public InfoProxy<Stat, Vector2dInfo>
 {
   public:
     Vector2dInfoProxy(Stat &stat) : InfoProxy<Stat, Vector2dInfo>(stat) {}
+
+    Result total() const { return this->s.total(); }
 };
 
 struct StorageParams
@@ -1298,6 +1300,19 @@ class Vector2dBase : public DataWrapVec2d<Derived, Vector2dInfoProxy>
 #endif
     }
 
+    /**
+     * Return a total of all entries in this vector.
+     * @return The total of all vector entries.
+     */
+    Result
+    total() const
+    {
+        Result total = 0.0;
+        for (off_type i = 0; i < size(); ++i)
+            total += data(i)->result();
+        return total;
+    }
+
     void
     prepare()
     {
@@ -1344,7 +1359,7 @@ struct DistParams : public StorageParams
 };
 
 /**
- * Templatized storage and interface for a distrbution stat.
+ * Templatized storage and interface for a distribution stat.
  */
 class DistStor
 {
@@ -1879,7 +1894,7 @@ class DistBase : public DataWrap<Derived, DistInfoProxy>
     }
 
     /**
-     *  Add the argument distribution to the this distibution.
+     *  Add the argument distribution to the this distribution.
      */
     void add(DistBase &d) { data()->add(d.data()); }
 

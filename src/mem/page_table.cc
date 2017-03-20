@@ -35,19 +35,15 @@
  * @file
  * Definitions of functional page table.
  */
-#include <fstream>
-#include <map>
-#include <memory>
+#include "mem/page_table.hh"
+
 #include <string>
 
-#include "base/bitfield.hh"
-#include "base/intmath.hh"
 #include "base/trace.hh"
 #include "config/the_isa.hh"
 #include "debug/MMU.hh"
-#include "mem/page_table.hh"
 #include "sim/faults.hh"
-#include "sim/sim_object.hh"
+#include "sim/serialize.hh"
 
 using namespace std;
 using namespace TheISA;

@@ -37,14 +37,16 @@
  * Authors: Gabe Black
  */
 
-#include "arch/x86/linux/linux.hh"
 #include "arch/x86/linux/process.hh"
+
 #include "arch/x86/isa_traits.hh"
+#include "arch/x86/linux/linux.hh"
 #include "arch/x86/registers.hh"
 #include "base/trace.hh"
 #include "cpu/thread_context.hh"
 #include "kern/linux/linux.hh"
 #include "sim/process.hh"
+#include "sim/syscall_desc.hh"
 #include "sim/syscall_emul.hh"
 
 using namespace std;
@@ -158,7 +160,7 @@ setThreadArea32Func(SyscallDesc *desc, int callnum,
         return -EFAULT;
 
     if (!gdt.copyIn(tc->getMemProxy()))
-        panic("Failed to copy in GDT for %s.\n", desc->name);
+        panic("Failed to copy in GDT for %s.\n", desc->name());
 
     if (userDesc->entry_number == (uint32_t)(-1)) {
         // Find a free TLS entry.
@@ -212,7 +214,7 @@ setThreadArea32Func(SyscallDesc *desc, int callnum,
     if (!userDesc.copyOut(tc->getMemProxy()))
         return -EFAULT;
     if (!gdt.copyOut(tc->getMemProxy()))
-        panic("Failed to copy out GDT for %s.\n", desc->name);
+        panic("Failed to copy out GDT for %s.\n", desc->name());
 
     return 0;
 }
@@ -236,7 +238,7 @@ static SyscallDesc syscallDescs64[] = {
     /*  15 */ SyscallDesc("rt_sigreturn", unimplementedFunc),
     /*  16 */ SyscallDesc("ioctl", ioctlFunc<X86Linux64>),
     /*  17 */ SyscallDesc("pread64", unimplementedFunc),
-    /*  18 */ SyscallDesc("pwrite64", unimplementedFunc),
+    /*  18 */ SyscallDesc("pwrite64", pwrite64Func<X86Linux64>),
     /*  19 */ SyscallDesc("readv", unimplementedFunc),
     /*  20 */ SyscallDesc("writev", writevFunc<X86Linux64>),
     /*  21 */ SyscallDesc("access", ignoreFunc),
@@ -355,7 +357,7 @@ static SyscallDesc syscallDescs64[] = {
     /* 134 */ SyscallDesc("uselib", unimplementedFunc),
     /* 135 */ SyscallDesc("personality", unimplementedFunc),
     /* 136 */ SyscallDesc("ustat", unimplementedFunc),
-    /* 137 */ SyscallDesc("statfs", unimplementedFunc),
+    /* 137 */ SyscallDesc("statfs", statfsFunc<X86Linux64>),
     /* 138 */ SyscallDesc("fstatfs", unimplementedFunc),
     /* 139 */ SyscallDesc("sysfs", unimplementedFunc),
     /* 140 */ SyscallDesc("getpriority", unimplementedFunc),
@@ -503,7 +505,7 @@ static SyscallDesc syscallDescs64[] = {
     /* 282 */ SyscallDesc("signalfd", unimplementedFunc),
     /* 283 */ SyscallDesc("timerfd_create", unimplementedFunc),
     /* 284 */ SyscallDesc("eventfd", unimplementedFunc),
-    /* 285 */ SyscallDesc("fallocate", unimplementedFunc),
+    /* 285 */ SyscallDesc("fallocate", fallocateFunc),
     /* 286 */ SyscallDesc("timerfd_settime", unimplementedFunc),
     /* 287 */ SyscallDesc("timerfd_gettime", unimplementedFunc),
     /* 288 */ SyscallDesc("accept4", unimplementedFunc),

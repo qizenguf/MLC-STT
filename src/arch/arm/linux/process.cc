@@ -44,13 +44,15 @@
  *          Giacomo Gabrielli
  */
 
-#include "arch/arm/linux/linux.hh"
 #include "arch/arm/linux/process.hh"
+
 #include "arch/arm/isa_traits.hh"
+#include "arch/arm/linux/linux.hh"
 #include "base/trace.hh"
 #include "cpu/thread_context.hh"
 #include "kern/linux/linux.hh"
 #include "sim/process.hh"
+#include "sim/syscall_desc.hh"
 #include "sim/syscall_emul.hh"
 #include "sim/system.hh"
 

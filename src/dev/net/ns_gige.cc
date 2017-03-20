@@ -1738,6 +1738,7 @@ NSGigE::txKick()
                     }
                 }
 
+                txPacket->simLength = txPacketBufPtr - txPacket->data;
                 txPacket->length = txPacketBufPtr - txPacket->data;
                 // this is just because the receive can't handle a
                 // packet bigger want to make sure
@@ -2186,6 +2187,7 @@ NSGigE::serialize(CheckpointOut &cp) const
     bool txPacketExists = txPacket != nullptr;
     SERIALIZE_SCALAR(txPacketExists);
     if (txPacketExists) {
+        txPacket->simLength = txPacketBufPtr - txPacket->data;
         txPacket->length = txPacketBufPtr - txPacket->data;
         txPacket->serialize("txPacket", cp);
         uint32_t txPktBufPtr = (uint32_t) (txPacketBufPtr - txPacket->data);
@@ -2362,7 +2364,7 @@ NSGigE::unserialize(CheckpointIn &cp)
     UNSERIALIZE_SCALAR(rxPacketExists);
     rxPacket = 0;
     if (rxPacketExists) {
-        rxPacket = make_shared<EthPacketData>(16384);
+        rxPacket = make_shared<EthPacketData>();
         rxPacket->unserialize("rxPacket", cp);
         uint32_t rxPktBufPtr;
         UNSERIALIZE_SCALAR(rxPktBufPtr);

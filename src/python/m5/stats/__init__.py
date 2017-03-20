@@ -29,42 +29,33 @@
 
 import m5
 
-from m5 import internal
-from m5.internal.stats import schedStatEvent as schedEvent
+import _m5.stats
 from m5.objects import Root
 from m5.util import attrdict, fatal
 
+# Stat exports
+from _m5.stats import schedStatEvent as schedEvent
+from _m5.stats import periodicStatDump
+
 outputList = []
 def initText(filename, desc=True):
-    output = internal.stats.initText(filename, desc)
+    output = _m5.stats.initText(filename, desc)
     outputList.append(output)
 
 def initSimStats():
-    internal.stats.initSimStats()
-    internal.stats.registerPythonStatsHandlers()
+    _m5.stats.initSimStats()
+    _m5.stats.registerPythonStatsHandlers()
 
 names = []
 stats_dict = {}
 stats_list = []
-raw_stats_list = []
 def enable():
     '''Enable the statistics package.  Before the statistics package is
     enabled, all statistics must be created and initialized and once
     the package is enabled, no more statistics can be created.'''
-    __dynamic_cast = []
-    for k, v in internal.stats.__dict__.iteritems():
-        if k.startswith('dynamic_'):
-            __dynamic_cast.append(v)
 
-    for stat in internal.stats.statsList():
-        for cast in __dynamic_cast:
-            val = cast(stat)
-            if val is not None:
-                stats_list.append(val)
-                raw_stats_list.append(val)
-                break
-        else:
-            fatal("unknown stat type %s", stat)
+    global stats_list
+    stats_list = list(_m5.stats.statsList())
 
     for stat in stats_list:
         if not stat.check() or not stat.baseCheck():
@@ -84,7 +75,7 @@ def enable():
         stats_dict[stat.name] = stat
         stat.enable()
 
-    internal.stats.enable();
+    _m5.stats.enable();
 
 def prepare():
     '''Prepare all stats for data access.  This must be done before
@@ -105,7 +96,7 @@ def dump():
         return
     lastDump = curTick
 
-    internal.stats.processDumpQueue()
+    _m5.stats.processDumpQueue()
 
     prepare()
 
@@ -113,7 +104,7 @@ def dump():
         if output.valid():
             output.begin()
             for stat in stats_list:
-                output.visit(stat)
+                stat.visit(output)
             output.end()
 
 def reset():
@@ -128,7 +119,7 @@ def reset():
     for stat in stats_list:
         stat.reset()
 
-    internal.stats.processResetQueue()
+    _m5.stats.processResetQueue()
 
 flags = attrdict({
     'none'    : 0x0000,

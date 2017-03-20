@@ -79,7 +79,7 @@ ClDriver::ClDriver(ClDriverParams *p)
         kernelInfo[i].code_offs = code_offs;
 
         name_offs += k->name().size() + 1;
-        code_offs += k->numInsts() * sizeof(GPUStaticInst*);
+        code_offs += k->numInsts() * sizeof(TheGpuISA::RawMachInst);
     }
 }
 
@@ -130,7 +130,8 @@ ClDriver::ioctl(LiveProcess *process, ThreadContext *tc, unsigned req)
                 HsaCode *k = kernels[i];
                 // add one for terminating '\0'
                 sizes->string_table_size += k->name().size() + 1;
-                sizes->code_size += k->numInsts() * sizeof(GPUStaticInst*);
+                sizes->code_size +=
+                    k->numInsts() * sizeof(TheGpuISA::RawMachInst);
             }
 
             sizes.copyOut(tc->getMemProxy());
@@ -239,6 +240,13 @@ ClDriver::ioctl(LiveProcess *process, ThreadContext *tc, unsigned req)
         {
             BufferArg buf(buf_addr, sizeof(uint32_t));
             *((uint32_t*)buf.bufferPtr()) = dispatcher->wfSize();
+            buf.copyOut(tc->getMemProxy());
+        }
+        break;
+      case HSA_GET_HW_STATIC_CONTEXT_SIZE:
+        {
+            BufferArg buf(buf_addr, sizeof(uint32_t));
+            *((uint32_t*)buf.bufferPtr()) = dispatcher->getStaticContextSize();
             buf.copyOut(tc->getMemProxy());
         }
         break;

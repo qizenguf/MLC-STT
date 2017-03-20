@@ -111,6 +111,8 @@ ElfObject::tryFile(const std::string &fname, size_t len, uint8_t *data,
     } else if (ehdr.e_machine == EM_AARCH64 &&
                ehdr.e_ident[EI_CLASS] == ELFCLASS64) {
         arch = Arm64;
+    } else if (ehdr.e_machine == EM_RISCV) {
+        arch = Riscv;
     } else if (ehdr.e_machine == EM_PPC &&
                ehdr.e_ident[EI_CLASS] == ELFCLASS32) {
         arch = Power;
@@ -383,7 +385,9 @@ ElfObject::ElfObject(const std::string &_filename, size_t _len,
     }
 
     // should have found at least one loadable segment
-    assert(text.size != 0);
+    warn_if(text.size == 0,
+            "Empty .text segment in '%s'. ELF file corrupted?\n",
+            filename);
 
     DPRINTFR(Loader, "text: 0x%x %d\ndata: 0x%x %d\nbss: 0x%x %d\n",
              text.baseAddr, text.size, data.baseAddr, data.size,

@@ -1,4 +1,4 @@
-# Copyright (c) 2009-2015 ARM Limited
+# Copyright (c) 2009-2017 ARM Limited
 # All rights reserved.
 #
 # The license below extends only to copyright in the software and shall
@@ -56,6 +56,18 @@ from Gic import *
 from EnergyCtrl import EnergyCtrl
 from ClockDomain import SrcClockDomain
 from SubSystem import SubSystem
+
+# Platforms with KVM support should generally use in-kernel GIC
+# emulation. Use a GIC model that automatically switches between
+# gem5's GIC model and KVM's GIC model if KVM is available.
+try:
+    from KvmGic import MuxingKvmGic
+    kvm_gicv2_class = MuxingKvmGic
+except ImportError:
+    # KVM support wasn't compiled into gem5. Fallback to a
+    # software-only GIC.
+    kvm_gicv2_class = Pl390
+    pass
 
 class AmbaPioDevice(BasicPioDevice):
     type = 'AmbaPioDevice'
@@ -231,7 +243,7 @@ class CpuLocalTimer(BasicPioDevice):
 class GenericTimer(SimObject):
     type = 'GenericTimer'
     cxx_header = "dev/arm/generic_timer.hh"
-    system = Param.System(Parent.any, "system")
+    system = Param.ArmSystem(Parent.any, "system")
     gic = Param.BaseGic(Parent.any, "GIC to use for interrupting")
     # @todo: for now only two timers per CPU is supported, which is the
     # normal behaviour when security extensions are disabled.
@@ -301,12 +313,18 @@ class RealView(Platform):
 
     _off_chip_ranges = []
 
-    def _attach_io(self, devices, bus):
+    def _attach_device(self, device, bus, dma_ports=None):
+        if hasattr(device, "pio"):
+            device.pio = bus.master
+        if hasattr(device, "dma"):
+            if dma_ports is None:
+                device.dma = bus.slave
+            else:
+                dma_ports.append(device.dma)
+
+    def _attach_io(self, devices, *args, **kwargs):
         for d in devices:
-            if hasattr(d, "pio"):
-                d.pio = bus.master
-            if hasattr(d, "dma"):
-                d.dma = bus.slave
+            self._attach_device(d, *args, **kwargs)
 
     def _attach_clk(self, devices, clkdomain):
         for d in devices:
@@ -325,13 +343,13 @@ class RealView(Platform):
     def offChipIOClkDomain(self, clkdomain):
         self._attach_clk(self._off_chip_devices(), clkdomain)
 
-    def attachOnChipIO(self, bus, bridge=None):
-        self._attach_io(self._on_chip_devices(), bus)
+    def attachOnChipIO(self, bus, bridge=None, **kwargs):
+        self._attach_io(self._on_chip_devices(), bus, **kwargs)
         if bridge:
             bridge.ranges = self._off_chip_ranges
 
-    def attachIO(self, bus):
-        self._attach_io(self._off_chip_devices(), bus)
+    def attachIO(self, *args, **kwargs):
+        self._attach_io(self._off_chip_devices(), *args, **kwargs)
 
 
     def setupBootLoader(self, mem_bus, cur_sys, loc):
@@ -759,7 +777,8 @@ class VExpress_EMM64(VExpress_EMM):
         pci_pio_base=0x2f000000)
 
     def setupBootLoader(self, mem_bus, cur_sys, loc):
-        self.nvmem = SimpleMemory(range = AddrRange(0, size = '64MB'))
+        self.nvmem = SimpleMemory(range=AddrRange(0, size='64MB'),
+                                  conf_table_reported=False)
         self.nvmem.port = mem_bus.master
         cur_sys.boot_loader = loc('boot_emm.arm64')
         cur_sys.atags_addr = 0x8000000
@@ -876,7 +895,8 @@ Interrupts:
     dcc = CoreTile2A15DCC()
 
     ### On-chip devices ###
-    gic = Pl390(dist_addr=0x2c001000, cpu_addr=0x2c002000, it_lines=512)
+    gic = kvm_gicv2_class(dist_addr=0x2c001000, cpu_addr=0x2c002000,
+                          it_lines=512)
     vgic = VGic(vcpu_addr=0x2c006000, hv_addr=0x2c004000, ppint=25)
     gicv2m = Gicv2m()
     gicv2m.frames = [
@@ -922,13 +942,13 @@ Interrupts:
             self.energy_ctrl,
         ]
 
-    def attachPciDevice(self, device, bus):
+    def attachPciDevice(self, device, *args, **kwargs):
         device.host = self.pci_host
-        device.pio = bus.master
-        device.dma = bus.slave
+        self._attach_device(device, *args, **kwargs)
 
     def setupBootLoader(self, mem_bus, cur_sys, loc):
-        self.nvmem = SimpleMemory(range=AddrRange(0, size='64MB'))
+        self.nvmem = SimpleMemory(range=AddrRange(0, size='64MB'),
+                                  conf_table_reported=False)
         self.nvmem.port = mem_bus.master
         cur_sys.boot_loader = [ loc('boot_emm.arm64'), loc('boot_emm.arm') ]
         cur_sys.atags_addr = 0x8000000

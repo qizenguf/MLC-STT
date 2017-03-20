@@ -32,13 +32,15 @@
  *          Timothy M. Jones
  */
 
-#include "arch/power/linux/linux.hh"
 #include "arch/power/linux/process.hh"
+
 #include "arch/power/isa_traits.hh"
+#include "arch/power/linux/linux.hh"
 #include "base/trace.hh"
 #include "cpu/thread_context.hh"
 #include "kern/linux/linux.hh"
 #include "sim/process.hh"
+#include "sim/syscall_desc.hh"
 #include "sim/syscall_emul.hh"
 #include "sim/system.hh"
 

@@ -41,16 +41,18 @@
  * Authors: Steve Reinhardt
  */
 
+#include "cpu/simple/timing.hh"
+
 #include "arch/locked_mem.hh"
 #include "arch/mmapped_ipr.hh"
 #include "arch/utility.hh"
 #include "base/bigint.hh"
 #include "config/the_isa.hh"
-#include "cpu/simple/timing.hh"
 #include "cpu/exetrace.hh"
 #include "debug/Config.hh"
 #include "debug/Drain.hh"
 #include "debug/ExecFaulting.hh"
+#include "debug/Mwait.hh"
 #include "debug/SimpleCPU.hh"
 #include "mem/packet.hh"
 #include "mem/packet_access.hh"
@@ -58,8 +60,6 @@
 #include "sim/faults.hh"
 #include "sim/full_system.hh"
 #include "sim/system.hh"
-
-#include "debug/Mwait.hh"
 
 using namespace std;
 using namespace TheISA;
@@ -409,14 +409,15 @@ TimingSimpleCPU::buildSplitPacket(PacketPtr &pkt1, PacketPtr &pkt2,
 
 Fault
 TimingSimpleCPU::readMem(Addr addr, uint8_t *data,
-                         unsigned size, unsigned flags)
+                         unsigned size, Request::Flags flags)
 {
     panic("readMem() is for atomic accesses, and should "
           "never be called on TimingSimpleCPU.\n");
 }
 
 Fault
-TimingSimpleCPU::initiateMemRead(Addr addr, unsigned size, unsigned flags)
+TimingSimpleCPU::initiateMemRead(Addr addr, unsigned size,
+                                 Request::Flags flags)
 {
     SimpleExecContext &t_info = *threadInfo[curThread];
     SimpleThread* thread = t_info.thread;
@@ -489,7 +490,7 @@ TimingSimpleCPU::handleWritePacket()
 
 Fault
 TimingSimpleCPU::writeMem(uint8_t *data, unsigned size,
-                          Addr addr, unsigned flags, uint64_t *res)
+                          Addr addr, Request::Flags flags, uint64_t *res)
 {
     SimpleExecContext &t_info = *threadInfo[curThread];
     SimpleThread* thread = t_info.thread;

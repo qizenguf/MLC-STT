@@ -38,7 +38,6 @@
 #include <string>
 
 #include "base/misc.hh"
-#include "gpu-compute/code_enums.hh"
 #include "gpu-compute/compute_unit.hh"
 #include "gpu-compute/gpu_dyn_inst.hh"
 #include "gpu-compute/shader.hh"
@@ -122,7 +121,7 @@ VectorRegisterFile::operandsReady(Wavefront *w, GPUDynInstPtr ii) const
 {
     for (int i = 0; i < ii->getNumOperands(); ++i) {
         if (ii->isVectorRegister(i)) {
-            uint32_t vgprIdx = ii->getRegisterIndex(i);
+            uint32_t vgprIdx = ii->getRegisterIndex(i, ii);
             uint32_t pVgpr = w->remap(vgprIdx, ii->getOperandSize(i), 1);
 
             if (regBusy(pVgpr, ii->getOperandSize(i)) == 1) {
@@ -153,15 +152,15 @@ VectorRegisterFile::operandsReady(Wavefront *w, GPUDynInstPtr ii) const
 void
 VectorRegisterFile::exec(GPUDynInstPtr ii, Wavefront *w)
 {
-    bool loadInstr = IS_OT_READ(ii->opType());
-    bool atomicInstr = IS_OT_ATOMIC(ii->opType());
+    bool loadInstr = ii->isLoad();
+    bool atomicInstr = ii->isAtomic() || ii->isMemFence();
 
     bool loadNoArgInstr = loadInstr && !ii->isArgLoad();
 
     // iterate over all register destination operands
     for (int i = 0; i < ii->getNumOperands(); ++i) {
         if (ii->isVectorRegister(i) && ii->isDstOperand(i)) {
-            uint32_t physReg = w->remap(ii->getRegisterIndex(i),
+            uint32_t physReg = w->remap(ii->getRegisterIndex(i, ii),
                                         ii->getOperandSize(i), 1);
 
             // mark the destination vector register as busy
@@ -217,7 +216,7 @@ VectorRegisterFile::updateResources(Wavefront *w, GPUDynInstPtr ii)
     // iterate over all register destination operands
     for (int i = 0; i < ii->getNumOperands(); ++i) {
         if (ii->isVectorRegister(i) && ii->isDstOperand(i)) {
-            uint32_t physReg = w->remap(ii->getRegisterIndex(i),
+            uint32_t physReg = w->remap(ii->getRegisterIndex(i, ii),
                                         ii->getOperandSize(i), 1);
             // set the in-flight status of the destination vector register
             preMarkReg(physReg, ii->getOperandSize(i), 1);

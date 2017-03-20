@@ -386,7 +386,7 @@ class VectorParamDesc(ParamDesc):
         code('%import "${{self.swig_module_name()}}.i"')
 
     def swig_decl(self, code):
-        code('%module(package="m5.internal") ${{self.swig_module_name()}}')
+        code('%module(package="_m5") ${{self.swig_module_name()}}')
         code('%{')
         self.ptype.cxx_predecls(code)
         code('%}')
@@ -619,7 +619,7 @@ class Cycles(CheckedInt):
     unsigned = True
 
     def getValue(self):
-        from m5.internal.core import Cycles
+        from _m5.core import Cycles
         return Cycles(self.value)
 
     @classmethod
@@ -778,7 +778,9 @@ class AddrRange(ParamValue):
             raise TypeError, "Too many keywords: %s" % kwargs.keys()
 
     def __str__(self):
-        return '%s:%s' % (self.start, self.end)
+        return '%s:%s:%s:%s:%s:%s' \
+            % (self.start, self.end, self.intlvHighBit, self.xorHighBit,\
+               self.intlvBits, self.intlvMatch)
 
     def size(self):
         # Divide the size by the size of the interleaving slice
@@ -799,22 +801,34 @@ class AddrRange(ParamValue):
 
     @classmethod
     def cxx_ini_parse(cls, code, src, dest, ret):
-        code('uint64_t _start, _end;')
+        code('uint64_t _start, _end, _intlvHighBit = 0, _xorHighBit = 0;')
+        code('uint64_t _intlvBits = 0, _intlvMatch = 0;')
         code('char _sep;')
         code('std::istringstream _stream(${src});')
         code('_stream >> _start;')
         code('_stream.get(_sep);')
         code('_stream >> _end;')
+        code('if (!_stream.fail() && !_stream.eof()) {')
+        code('    _stream.get(_sep);')
+        code('    _stream >> _intlvHighBit;')
+        code('    _stream.get(_sep);')
+        code('    _stream >> _xorHighBit;')
+        code('    _stream.get(_sep);')
+        code('    _stream >> _intlvBits;')
+        code('    _stream.get(_sep);')
+        code('    _stream >> _intlvMatch;')
+        code('}')
         code('bool _ret = !_stream.fail() &&'
             '_stream.eof() && _sep == \':\';')
         code('if (_ret)')
-        code('   ${dest} = AddrRange(_start, _end);')
+        code('   ${dest} = AddrRange(_start, _end, _intlvHighBit, \
+                _xorHighBit, _intlvBits, _intlvMatch);')
         code('${ret} _ret;')
 
     def getValue(self):
         # Go from the Python class to the wrapped C++ class generated
         # by swig
-        from m5.internal.range import AddrRange
+        from _m5.range import AddrRange
 
         return AddrRange(long(self.start), long(self.end),
                          int(self.intlvHighBit), int(self.xorHighBit),
@@ -1364,7 +1378,7 @@ $wrapper $wrapper_name {
     def swig_decl(cls, code):
         name = cls.__name__
         code('''\
-%module(package="m5.internal") enum_$name
+%module(package="_m5") enum_$name
 
 %{
 #include "enums/$name.hh"
@@ -1405,7 +1419,7 @@ class Enum(ParamValue):
 
     @classmethod
     def swig_predecls(cls, code):
-        code('%import "python/m5/internal/enum_$0.i"', cls.__name__)
+        code('%import "python/_m5/enum_$0.i"', cls.__name__)
 
     @classmethod
     def cxx_ini_parse(cls, code, src, dest, ret):
@@ -1895,7 +1909,7 @@ class PortRef(object):
 
     # Call C++ to create corresponding port connection between C++ objects
     def ccConnect(self):
-        from m5.internal.pyobject import connectPorts
+        from _m5.pyobject import connectPorts
 
         if self.role == 'SLAVE':
             # do nothing and let the master take care of it

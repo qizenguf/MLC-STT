@@ -96,12 +96,14 @@ class BaseSetAssoc : public BaseTags
 
     /** The cache sets. */
     SetType *sets;
-
+  
     /** The cache blocks. */
     BlkType *blks;
+    PacketPtr tempPktPtr; // add by Qi for new block value
+    int range;
     /** The data blocks, 1 per cache block. */
     uint8_t *dataBlks;
-
+    
     /** The amount to shift the address to get the set. */
     int setShift;
     /** The amount to shift the address to get the tag. */
@@ -225,7 +227,7 @@ public:
         if (blk != nullptr) {
             if (blk->whenReady > curTick()
                 && cache->ticksToCycles(blk->whenReady - curTick())
-                > accessLatency) {
+                > lat) { // modified
                 lat = cache->ticksToCycles(blk->whenReady - curTick());
             }
             blk->refCount += 1;
@@ -243,6 +245,14 @@ public:
      * @return Pointer to the cache block if found.
      */
     CacheBlk* findBlock(Addr addr, bool is_secure) const override;
+    /**
+     * store the tmpt into the cache.
+     * @param pkt Packet holding the address to update
+     * @param blk The block to update.
+     */
+    void storeTempPkt(PacketPtr pkt) { 
+		tempPktPtr = pkt;
+	}
 
     /**
      * Find an invalid block to evict for the address provided.
@@ -251,7 +261,8 @@ public:
      * @param addr The addr to a find a replacement candidate for.
      * @return The candidate block.
      */
-    CacheBlk* findVictim(Addr addr) override
+
+    CacheBlk* findVictim(Addr addr, PacketPtr pkt = nullptr ) override
     {
         BlkType *blk = nullptr;
         int set = extractSet(addr);
@@ -265,6 +276,7 @@ public:
 
         return blk;
     }
+    
 
     /**
      * Insert the new block into the cache.

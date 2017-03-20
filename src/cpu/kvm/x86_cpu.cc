@@ -28,18 +28,19 @@
  * Authors: Andreas Sandberg
  */
 
+#include "cpu/kvm/x86_cpu.hh"
+
 #include <linux/kvm.h>
 
 #include <algorithm>
 #include <cerrno>
 #include <memory>
 
-#include "arch/x86/regs/msr.hh"
-#include "arch/x86/cpuid.hh"
-#include "arch/x86/utility.hh"
 #include "arch/registers.hh"
+#include "arch/x86/cpuid.hh"
+#include "arch/x86/regs/msr.hh"
+#include "arch/x86/utility.hh"
 #include "cpu/kvm/base.hh"
-#include "cpu/kvm/x86_cpu.hh"
 #include "debug/Drain.hh"
 #include "debug/Kvm.hh"
 #include "debug/KvmContext.hh"
@@ -1344,20 +1345,20 @@ X86KvmCPU::handleKvmExitIO()
         pAddr = X86ISA::x86IOAddress(port);
     }
 
-    Request io_req(pAddr, kvm_run.io.size, Request::UNCACHEABLE,
-                   dataMasterId());
-    io_req.setContext(tc->contextId());
-
     const MemCmd cmd(isWrite ? MemCmd::WriteReq : MemCmd::ReadReq);
     // Temporarily lock and migrate to the event queue of the
     // VM. This queue is assumed to "own" all devices we need to
     // access if running in multi-core mode.
     EventQueue::ScopedMigration migrate(vm.eventQueue());
     for (int i = 0; i < count; ++i) {
-        Packet pkt(&io_req, cmd);
+        RequestPtr io_req = new Request(pAddr, kvm_run.io.size,
+                                        Request::UNCACHEABLE, dataMasterId());
+        io_req->setContext(tc->contextId());
 
-        pkt.dataStatic(guestData);
-        delay += dataPort.sendAtomic(&pkt);
+        PacketPtr pkt = new Packet(io_req, cmd);
+
+        pkt->dataStatic(guestData);
+        delay += dataPort.submitIO(pkt);
 
         guestData += kvm_run.io.size;
     }

@@ -29,10 +29,11 @@
  *          Ali Saidi
  */
 
+#include "arch/sparc/process.hh"
+
 #include "arch/sparc/asi.hh"
 #include "arch/sparc/handlers.hh"
 #include "arch/sparc/isa_traits.hh"
-#include "arch/sparc/process.hh"
 #include "arch/sparc/registers.hh"
 #include "arch/sparc/types.hh"
 #include "base/loader/elf_object.hh"
@@ -42,6 +43,7 @@
 #include "debug/Stack.hh"
 #include "mem/page_table.hh"
 #include "sim/process_impl.hh"
+#include "sim/syscall_return.hh"
 #include "sim/system.hh"
 
 using namespace std;

@@ -240,6 +240,8 @@ IGbE::read(PacketPtr pkt)
         pkt->set<uint32_t>(regs.pba());
         break;
       case REG_WUC:
+      case REG_WUFC:
+      case REG_WUS:
       case REG_LEDCTL:
         pkt->set<uint32_t>(0); // We don't care, so just return 0
         break;
@@ -546,6 +548,8 @@ IGbE::write(PacketPtr pkt)
         regs.pba.txa(64 - regs.pba.rxa());
         break;
       case REG_WUC:
+      case REG_WUFC:
+      case REG_WUS:
       case REG_LEDCTL:
       case REG_FCAL:
       case REG_FCAH:
@@ -1771,12 +1775,15 @@ IGbE::TxDescCache::pktComplete()
         DPRINTF(EthernetDesc, "TSO: use: %d hdrlen: %d mss: %d total: %d "
             "used: %d loaded hdr: %d\n", useTso, tsoHeaderLen, tsoMss,
             tsoTotalLen, tsoUsedLen, tsoLoadedHeader);
+        pktPtr->simLength += tsoCopyBytes;
         pktPtr->length += tsoCopyBytes;
         tsoUsedLen += tsoCopyBytes;
         DPRINTF(EthernetDesc, "TSO: descBytesUsed: %d copyBytes: %d\n",
             tsoDescBytesUsed, tsoCopyBytes);
-    } else
+    } else {
+        pktPtr->simLength += TxdOp::getLen(desc);
         pktPtr->length += TxdOp::getLen(desc);
+    }
 
 
 

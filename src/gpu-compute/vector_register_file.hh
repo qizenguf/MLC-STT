@@ -39,7 +39,9 @@
 #include <list>
 
 #include "base/statistics.hh"
+#include "base/trace.hh"
 #include "base/types.hh"
+#include "debug/GPUVRF.hh"
 #include "gpu-compute/vector_register_state.hh"
 #include "sim/sim_object.hh"
 
@@ -71,6 +73,7 @@ class VectorRegisterFile : public SimObject
     read(int regIdx, int threadId=0)
     {
         T p0 = vgprState->read<T>(regIdx, threadId);
+        DPRINTF(GPUVRF, "reading vreg[%d][%d] = %u\n", regIdx, threadId, (uint64_t)p0);
 
         return p0;
     }
@@ -80,6 +83,7 @@ class VectorRegisterFile : public SimObject
     void
     write(int regIdx, T value, int threadId=0)
     {
+        DPRINTF(GPUVRF, "writing vreg[%d][%d] = %u\n", regIdx, threadId, (uint64_t)value);
         vgprState->write<T>(regIdx, value, threadId);
     }
 

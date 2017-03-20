@@ -114,18 +114,28 @@ void
 FetchUnit::initiateFetch(Wavefront *wavefront)
 {
     // calculate the virtual address to fetch from the SQC
-    Addr vaddr = wavefront->pc() + wavefront->instructionBuffer.size();
-    vaddr = wavefront->base_ptr +  vaddr * sizeof(GPUStaticInst*);
+    Addr vaddr = wavefront->pc();
+
+    /**
+     * the instruction buffer holds one instruction per entry, regardless
+     * of the underlying instruction's size. the PC, however, addresses
+     * instrutions on a 32b granularity so we must account for that here.
+    */
+    for (int i = 0; i < wavefront->instructionBuffer.size(); ++i) {
+        vaddr +=
+            wavefront->instructionBuffer.at(i)->staticInstruction()->instSize();
+    }
+    vaddr = wavefront->basePtr +  vaddr;
 
     DPRINTF(GPUTLB, "CU%d: WF[%d][%d]: Initiating fetch translation: %#x\n",
             computeUnit->cu_id, wavefront->simdId, wavefront->wfSlotId, vaddr);
 
     // Since this is an instruction prefetch, if you're split then just finish
     // out the current line.
-    unsigned block_size = RubySystem::getBlockSizeBytes();
+    int block_size = computeUnit->cacheLineSize();
     // check for split accesses
     Addr split_addr = roundDown(vaddr + block_size - 1, block_size);
-    unsigned size = block_size;
+    int size = block_size;
 
     if (split_addr > vaddr) {
         // misaligned access, just grab the rest of the line
@@ -267,6 +277,18 @@ FetchUnit::processFetchReturn(PacketPtr pkt)
             GPUStaticInst *inst_ptr = decoder.decode(inst_index_ptr[i]);
 
             assert(inst_ptr);
+
+            if (inst_ptr->instSize() == 8) {
+                /**
+                 * this instruction occupies 2 consecutive
+                 * entries in the instruction array, the
+                 * second of which contains a nullptr. so if
+                 * this inst is 8 bytes we advance two entries
+                 * instead of 1
+                 */
+                ++i;
+            }
+
             DPRINTF(GPUFetch, "CU%d: WF[%d][%d]: added %s\n",
                     computeUnit->cu_id, wavefront->simdId,
                     wavefront->wfSlotId, inst_ptr->disassemble());

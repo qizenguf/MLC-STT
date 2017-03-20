@@ -75,7 +75,9 @@ ComputeUnit::ComputeUnit(const Params *p) : MemObject(p), fetchStage(p),
     req_tick_latency(p->mem_req_latency * p->clk_domain->clockPeriod()),
     resp_tick_latency(p->mem_resp_latency * p->clk_domain->clockPeriod()),
     _masterId(p->system->getMasterId(name() + ".ComputeUnit")),
-    lds(*p->localDataStore), globalSeqNum(0),  wavefrontSize(p->wfSize)
+    lds(*p->localDataStore), _cacheLineSize(p->system->cacheLineSize()),
+    globalSeqNum(0), wavefrontSize(p->wfSize),
+    kernelLaunchInst(new KernelLaunchStaticInst())
 {
     /**
      * This check is necessary because std::bitset only provides conversion
@@ -174,66 +176,23 @@ ComputeUnit::~ComputeUnit()
 }
 
 void
-ComputeUnit::FillKernelState(Wavefront *w, NDRange *ndr)
+ComputeUnit::fillKernelState(Wavefront *w, NDRange *ndr)
 {
     w->resizeRegFiles(ndr->q.cRegCount, ndr->q.sRegCount, ndr->q.dRegCount);
 
-    w->workgroupsz[0] = ndr->q.wgSize[0];
-    w->workgroupsz[1] = ndr->q.wgSize[1];
-    w->workgroupsz[2] = ndr->q.wgSize[2];
-    w->wg_sz = w->workgroupsz[0] * w->workgroupsz[1] * w->workgroupsz[2];
-    w->gridsz[0] = ndr->q.gdSize[0];
-    w->gridsz[1] = ndr->q.gdSize[1];
-    w->gridsz[2] = ndr->q.gdSize[2];
+    w->workGroupSz[0] = ndr->q.wgSize[0];
+    w->workGroupSz[1] = ndr->q.wgSize[1];
+    w->workGroupSz[2] = ndr->q.wgSize[2];
+    w->wgSz = w->workGroupSz[0] * w->workGroupSz[1] * w->workGroupSz[2];
+    w->gridSz[0] = ndr->q.gdSize[0];
+    w->gridSz[1] = ndr->q.gdSize[1];
+    w->gridSz[2] = ndr->q.gdSize[2];
     w->kernelArgs = ndr->q.args;
     w->privSizePerItem = ndr->q.privMemPerItem;
     w->spillSizePerItem = ndr->q.spillMemPerItem;
     w->roBase = ndr->q.roMemStart;
     w->roSize = ndr->q.roMemTotal;
-}
-
-void
-ComputeUnit::InitializeWFContext(WFContext *wfCtx, NDRange *ndr, int cnt,
-                        int trueWgSize[], int trueWgSizeTotal,
-                        LdsChunk *ldsChunk, uint64_t origSpillMemStart)
-{
-    wfCtx->cnt = cnt;
-
-    VectorMask init_mask;
-    init_mask.reset();
-
-    for (int k = 0; k < wfSize(); ++k) {
-        if (k + cnt * wfSize() < trueWgSizeTotal)
-            init_mask[k] = 1;
-    }
-
-    wfCtx->init_mask = init_mask.to_ullong();
-    wfCtx->exec_mask = init_mask.to_ullong();
-
-    wfCtx->bar_cnt.resize(wfSize(), 0);
-
-    wfCtx->max_bar_cnt = 0;
-    wfCtx->old_barrier_cnt = 0;
-    wfCtx->barrier_cnt = 0;
-
-    wfCtx->privBase = ndr->q.privMemStart;
-    ndr->q.privMemStart += ndr->q.privMemPerItem * wfSize();
-
-    wfCtx->spillBase = ndr->q.spillMemStart;
-    ndr->q.spillMemStart += ndr->q.spillMemPerItem * wfSize();
-
-    wfCtx->pc = 0;
-    wfCtx->rpc = UINT32_MAX;
-
-    // set the wavefront context to have a pointer to this section of the LDS
-    wfCtx->ldsChunk = ldsChunk;
-
-    // WG state
-    wfCtx->wg_id = ndr->globalWgId;
-    wfCtx->barrier_id = barrier_id;
-
-    // Kernel wide state
-    wfCtx->ndr = ndr;
+    w->computeActualWgSz(ndr);
 }
 
 void
@@ -264,63 +223,68 @@ ComputeUnit::updateEvents() {
 
 
 void
-ComputeUnit::StartWF(Wavefront *w, WFContext *wfCtx, int trueWgSize[],
-                     int trueWgSizeTotal)
+ComputeUnit::startWavefront(Wavefront *w, int waveId, LdsChunk *ldsChunk,
+                            NDRange *ndr)
 {
     static int _n_wave = 0;
-    int cnt = wfCtx->cnt;
-    NDRange *ndr = wfCtx->ndr;
 
-    // Fill in Kernel state
-    FillKernelState(w, ndr);
-
-    w->kern_id = ndr->dispatchId;
-    w->dynwaveid = cnt;
-    w->init_mask = wfCtx->init_mask;
+    VectorMask init_mask;
+    init_mask.reset();
 
     for (int k = 0; k < wfSize(); ++k) {
-        w->workitemid[0][k] = (k+cnt*wfSize()) % trueWgSize[0];
-        w->workitemid[1][k] =
-            ((k + cnt * wfSize()) / trueWgSize[0]) % trueWgSize[1];
-        w->workitemid[2][k] =
-            (k + cnt * wfSize()) / (trueWgSize[0] * trueWgSize[1]);
-
-        w->workitemFlatId[k] = w->workitemid[2][k] * trueWgSize[0] *
-            trueWgSize[1] + w->workitemid[1][k] * trueWgSize[0] +
-            w->workitemid[0][k];
+        if (k + waveId * wfSize() < w->actualWgSzTotal)
+            init_mask[k] = 1;
     }
 
-    w->old_barrier_cnt = wfCtx->old_barrier_cnt;
-    w->barrier_cnt = wfCtx->barrier_cnt;
-    w->barrier_slots = divCeil(trueWgSizeTotal, wfSize());
+    w->kernId = ndr->dispatchId;
+    w->wfId = waveId;
+    w->initMask = init_mask.to_ullong();
 
-    for (int i = 0; i < wfSize(); ++i) {
-        w->bar_cnt[i] = wfCtx->bar_cnt[i];
+    for (int k = 0; k < wfSize(); ++k) {
+        w->workItemId[0][k] = (k + waveId * wfSize()) % w->actualWgSz[0];
+        w->workItemId[1][k] = ((k + waveId * wfSize()) / w->actualWgSz[0]) %
+                             w->actualWgSz[1];
+        w->workItemId[2][k] = (k + waveId * wfSize()) /
+                              (w->actualWgSz[0] * w->actualWgSz[1]);
+
+        w->workItemFlatId[k] = w->workItemId[2][k] * w->actualWgSz[0] *
+            w->actualWgSz[1] + w->workItemId[1][k] * w->actualWgSz[0] +
+            w->workItemId[0][k];
     }
 
-    w->max_bar_cnt = wfCtx->max_bar_cnt;
-    w->privBase = wfCtx->privBase;
-    w->spillBase = wfCtx->spillBase;
+    w->barrierSlots = divCeil(w->actualWgSzTotal, wfSize());
 
-    w->pushToReconvergenceStack(wfCtx->pc, wfCtx->rpc, wfCtx->exec_mask);
+    w->barCnt.resize(wfSize(), 0);
+
+    w->maxBarCnt = 0;
+    w->oldBarrierCnt = 0;
+    w->barrierCnt = 0;
+
+    w->privBase = ndr->q.privMemStart;
+    ndr->q.privMemStart += ndr->q.privMemPerItem * wfSize();
+
+    w->spillBase = ndr->q.spillMemStart;
+    ndr->q.spillMemStart += ndr->q.spillMemPerItem * wfSize();
+
+    w->pushToReconvergenceStack(0, UINT32_MAX, init_mask.to_ulong());
 
     // WG state
-    w->wg_id = wfCtx->wg_id;
-    w->dispatchid = wfCtx->ndr->dispatchId;
-    w->workgroupid[0] = w->wg_id % ndr->numWg[0];
-    w->workgroupid[1] = (w->wg_id / ndr->numWg[0]) % ndr->numWg[1];
-    w->workgroupid[2] = w->wg_id / (ndr->numWg[0] * ndr->numWg[1]);
+    w->wgId = ndr->globalWgId;
+    w->dispatchId = ndr->dispatchId;
+    w->workGroupId[0] = w->wgId % ndr->numWg[0];
+    w->workGroupId[1] = (w->wgId / ndr->numWg[0]) % ndr->numWg[1];
+    w->workGroupId[2] = w->wgId / (ndr->numWg[0] * ndr->numWg[1]);
 
-    w->barrier_id = wfCtx->barrier_id;
+    w->barrierId = barrier_id;
     w->stalledAtBarrier = false;
 
-    // move this from the context into the actual wavefront
-    w->ldsChunk = wfCtx->ldsChunk;
+    // set the wavefront context to have a pointer to this section of the LDS
+    w->ldsChunk = ldsChunk;
 
     int32_t refCount M5_VAR_USED =
-                    lds.increaseRefCounter(w->dispatchid, w->wg_id);
+                    lds.increaseRefCounter(w->dispatchId, w->wgId);
     DPRINTF(GPUDisp, "CU%d: increase ref ctr wg[%d] to [%d]\n",
-                    cu_id, w->wg_id, refCount);
+                    cu_id, w->wgId, refCount);
 
     w->instructionBuffer.clear();
 
@@ -330,8 +294,8 @@ ComputeUnit::StartWF(Wavefront *w, WFContext *wfCtx, int trueWgSize[],
     // is this the last wavefront in the workgroup
     // if set the spillWidth to be the remaining work-items
     // so that the vector access is correct
-    if ((cnt + 1) * wfSize() >= trueWgSizeTotal) {
-        w->spillWidth = trueWgSizeTotal - (cnt * wfSize());
+    if ((waveId + 1) * wfSize() >= w->actualWgSzTotal) {
+        w->spillWidth = w->actualWgSzTotal - (waveId * wfSize());
     } else {
         w->spillWidth = wfSize();
     }
@@ -340,7 +304,6 @@ ComputeUnit::StartWF(Wavefront *w, WFContext *wfCtx, int trueWgSize[],
             "WF[%d][%d]\n", _n_wave, barrier_id, cu_id, w->simdId, w->wfSlotId);
 
     w->start(++_n_wave, ndr->q.code_ptr);
-    wfCtx->bar_cnt.clear();
 }
 
 void
@@ -355,31 +318,17 @@ ComputeUnit::StartWorkgroup(NDRange *ndr)
     // Send L1 cache acquire
     // isKernel + isAcquire = Kernel Begin
     if (shader->impl_kern_boundary_sync) {
-        GPUDynInstPtr gpuDynInst = std::make_shared<GPUDynInst>(this,
-                                                                nullptr,
-                                                                nullptr, 0);
+        GPUDynInstPtr gpuDynInst =
+            std::make_shared<GPUDynInst>(this, nullptr, kernelLaunchInst,
+                                         getAndIncSeqNum());
 
         gpuDynInst->useContinuation = false;
-        gpuDynInst->memoryOrder = Enums::MEMORY_ORDER_SC_ACQUIRE;
-        gpuDynInst->scope = Enums::MEMORY_SCOPE_SYSTEM;
         injectGlobalMemFence(gpuDynInst, true);
     }
 
-    // Get true size of workgroup (after clamping to grid size)
-    int trueWgSize[3];
-    int trueWgSizeTotal = 1;
-
-    for (int d = 0; d < 3; ++d) {
-        trueWgSize[d] = std::min(ndr->q.wgSize[d], ndr->q.gdSize[d] -
-                                 ndr->wgId[d] * ndr->q.wgSize[d]);
-
-        trueWgSizeTotal *= trueWgSize[d];
-    }
-
-    uint64_t origSpillMemStart = ndr->q.spillMemStart;
     // calculate the number of 32-bit vector registers required by wavefront
     int vregDemand = ndr->q.sRegCount + (2 * ndr->q.dRegCount);
-    int cnt = 0;
+    int wave_id = 0;
 
     // Assign WFs by spreading them across SIMDs, 1 WF per SIMD at a time
     for (int m = 0; m < shader->n_wf * numSIMDs; ++m) {
@@ -388,9 +337,10 @@ ComputeUnit::StartWorkgroup(NDRange *ndr)
         // It must be stopped and not waiting
         // for a release to complete S_RETURNING
         if (w->status == Wavefront::S_STOPPED) {
+            fillKernelState(w, ndr);
             // if we have scheduled all work items then stop
             // scheduling wavefronts
-            if (cnt * wfSize() >= trueWgSizeTotal)
+            if (wave_id * wfSize() >= w->actualWgSzTotal)
                 break;
 
             // reserve vector registers for the scheduled wavefront
@@ -403,13 +353,8 @@ ComputeUnit::StartWorkgroup(NDRange *ndr)
             w->reservedVectorRegs = normSize;
             vectorRegsReserved[m % numSIMDs] += w->reservedVectorRegs;
 
-            WFContext wfCtx;
-
-            InitializeWFContext(&wfCtx, ndr, cnt, trueWgSize, trueWgSizeTotal,
-                                ldsChunk, origSpillMemStart);
-
-            StartWF(w, &wfCtx, trueWgSize, trueWgSizeTotal);
-            ++cnt;
+            startWavefront(w, wave_id, ldsChunk, ndr);
+            ++wave_id;
         }
     }
     ++barrier_id;
@@ -511,15 +456,15 @@ ComputeUnit::AllAtBarrier(uint32_t _barrier_id, uint32_t bcnt, uint32_t bslots)
                 DPRINTF(GPUSync, "Checking WF[%d][%d]\n", i_simd, i_wf);
 
                 DPRINTF(GPUSync, "wf->barrier_id = %d, _barrier_id = %d\n",
-                        w->barrier_id, _barrier_id);
+                        w->barrierId, _barrier_id);
 
                 DPRINTF(GPUSync, "wf->barrier_cnt %d, bcnt = %d\n",
-                        w->barrier_cnt, bcnt);
+                        w->barrierCnt, bcnt);
             }
 
             if (w->status == Wavefront::S_RUNNING &&
-                w->barrier_id == _barrier_id && w->barrier_cnt == bcnt &&
-                !w->outstanding_reqs) {
+                w->barrierId == _barrier_id && w->barrierCnt == bcnt &&
+                !w->outstandingReqs) {
                 ++ccnt;
 
                 DPRINTF(GPUSync, "WF[%d][%d] at barrier, increment ccnt to "
@@ -689,20 +634,20 @@ ComputeUnit::DataPort::recvTimingResp(PacketPtr pkt)
         if (w->status == Wavefront::S_RETURNING) {
             DPRINTF(GPUDisp, "CU%d: WF[%d][%d][wv=%d]: WG id completed %d\n",
                     computeUnit->cu_id, w->simdId, w->wfSlotId,
-                    w->wfDynId, w->kern_id);
+                    w->wfDynId, w->kernId);
 
             computeUnit->shader->dispatcher->notifyWgCompl(w);
             w->status = Wavefront::S_STOPPED;
         } else {
-            w->outstanding_reqs--;
+            w->outstandingReqs--;
         }
 
         DPRINTF(GPUSync, "CU%d: WF[%d][%d]: barrier_cnt = %d\n",
                 computeUnit->cu_id, gpuDynInst->simdId,
-                gpuDynInst->wfSlotId, w->barrier_cnt);
+                gpuDynInst->wfSlotId, w->barrierCnt);
 
         if (gpuDynInst->useContinuation) {
-            assert(gpuDynInst->scope != Enums::MEMORY_SCOPE_NONE);
+            assert(!gpuDynInst->isNoScope());
             gpuDynInst->execContinuation(gpuDynInst->staticInstruction(),
                                            gpuDynInst);
         }
@@ -713,7 +658,7 @@ ComputeUnit::DataPort::recvTimingResp(PacketPtr pkt)
         return true;
     } else if (pkt->req->isKernel() && pkt->req->isAcquire()) {
         if (gpuDynInst->useContinuation) {
-            assert(gpuDynInst->scope != Enums::MEMORY_SCOPE_NONE);
+            assert(!gpuDynInst->isNoScope());
             gpuDynInst->execContinuation(gpuDynInst->staticInstruction(),
                                            gpuDynInst);
         }
@@ -997,6 +942,8 @@ void
 ComputeUnit::injectGlobalMemFence(GPUDynInstPtr gpuDynInst, bool kernelLaunch,
                                   Request* req)
 {
+    assert(gpuDynInst->isGlobalSeg());
+
     if (!req) {
         req = new Request(0, 0, 0, 0, masterId(), 0, gpuDynInst->wfDynId);
     }
@@ -1004,8 +951,6 @@ ComputeUnit::injectGlobalMemFence(GPUDynInstPtr gpuDynInst, bool kernelLaunch,
     if (kernelLaunch) {
         req->setFlags(Request::KERNEL);
     }
-
-    gpuDynInst->s_type = SEG_GLOBAL;
 
     // for non-kernel MemFence operations, memorder flags are set depending
     // on which type of request is currently being sent, so this
@@ -1088,18 +1033,7 @@ ComputeUnit::DataPort::MemRespEvent::process()
                 if (gpuDynInst->n_reg > MAX_REGS_FOR_NON_VEC_MEM_INST)
                     gpuDynInst->statusVector.clear();
 
-                if (gpuDynInst->m_op == Enums::MO_LD || MO_A(gpuDynInst->m_op)
-                    || MO_ANR(gpuDynInst->m_op)) {
-                    assert(compute_unit->globalMemoryPipe.isGMLdRespFIFOWrRdy());
-
-                    compute_unit->globalMemoryPipe.getGMLdRespFIFO()
-                        .push(gpuDynInst);
-                } else {
-                    assert(compute_unit->globalMemoryPipe.isGMStRespFIFOWrRdy());
-
-                    compute_unit->globalMemoryPipe.getGMStRespFIFO()
-                        .push(gpuDynInst);
-                }
+                compute_unit->globalMemoryPipe.handleResponse(gpuDynInst);
 
                 DPRINTF(GPUMem, "CU%d: WF[%d][%d]: packet totally complete\n",
                         compute_unit->cu_id, gpuDynInst->simdId,
@@ -1110,7 +1044,7 @@ ComputeUnit::DataPort::MemRespEvent::process()
                 // the continuation may generate more work for
                 // this memory request
                 if (gpuDynInst->useContinuation) {
-                    assert(gpuDynInst->scope != Enums::MEMORY_SCOPE_NONE);
+                    assert(!gpuDynInst->isNoScope());
                     gpuDynInst->execContinuation(gpuDynInst->staticInstruction(),
                                                  gpuDynInst);
                 }
@@ -1120,7 +1054,7 @@ ComputeUnit::DataPort::MemRespEvent::process()
         gpuDynInst->statusBitVector = VectorMask(0);
 
         if (gpuDynInst->useContinuation) {
-            assert(gpuDynInst->scope != Enums::MEMORY_SCOPE_NONE);
+            assert(!gpuDynInst->isNoScope());
             gpuDynInst->execContinuation(gpuDynInst->staticInstruction(),
                                          gpuDynInst);
         }
@@ -1465,6 +1399,114 @@ ComputeUnit::regStats()
 {
     MemObject::regStats();
 
+    vALUInsts
+        .name(name() + ".valu_insts")
+        .desc("Number of vector ALU insts issued.")
+        ;
+    vALUInstsPerWF
+        .name(name() + ".valu_insts_per_wf")
+        .desc("The avg. number of vector ALU insts issued per-wavefront.")
+        ;
+    sALUInsts
+        .name(name() + ".salu_insts")
+        .desc("Number of scalar ALU insts issued.")
+        ;
+    sALUInstsPerWF
+        .name(name() + ".salu_insts_per_wf")
+        .desc("The avg. number of scalar ALU insts issued per-wavefront.")
+        ;
+    instCyclesVALU
+        .name(name() + ".inst_cycles_valu")
+        .desc("Number of cycles needed to execute VALU insts.")
+        ;
+    instCyclesSALU
+        .name(name() + ".inst_cycles_salu")
+        .desc("Number of cycles needed to execute SALU insts.")
+        ;
+    threadCyclesVALU
+        .name(name() + ".thread_cycles_valu")
+        .desc("Number of thread cycles used to execute vector ALU ops. "
+              "Similar to instCyclesVALU but multiplied by the number of "
+              "active threads.")
+        ;
+    vALUUtilization
+        .name(name() + ".valu_utilization")
+        .desc("Percentage of active vector ALU threads in a wave.")
+        ;
+    ldsNoFlatInsts
+        .name(name() + ".lds_no_flat_insts")
+        .desc("Number of LDS insts issued, not including FLAT "
+              "accesses that resolve to LDS.")
+        ;
+    ldsNoFlatInstsPerWF
+        .name(name() + ".lds_no_flat_insts_per_wf")
+        .desc("The avg. number of LDS insts (not including FLAT "
+              "accesses that resolve to LDS) per-wavefront.")
+        ;
+    flatVMemInsts
+        .name(name() + ".flat_vmem_insts")
+        .desc("The number of FLAT insts that resolve to vmem issued.")
+        ;
+    flatVMemInstsPerWF
+        .name(name() + ".flat_vmem_insts_per_wf")
+        .desc("The average number of FLAT insts that resolve to vmem "
+              "issued per-wavefront.")
+        ;
+    flatLDSInsts
+        .name(name() + ".flat_lds_insts")
+        .desc("The number of FLAT insts that resolve to LDS issued.")
+        ;
+    flatLDSInstsPerWF
+        .name(name() + ".flat_lds_insts_per_wf")
+        .desc("The average number of FLAT insts that resolve to LDS "
+              "issued per-wavefront.")
+        ;
+    vectorMemWrites
+        .name(name() + ".vector_mem_writes")
+        .desc("Number of vector mem write insts (excluding FLAT insts).")
+        ;
+    vectorMemWritesPerWF
+        .name(name() + ".vector_mem_writes_per_wf")
+        .desc("The average number of vector mem write insts "
+              "(excluding FLAT insts) per-wavefront.")
+        ;
+    vectorMemReads
+        .name(name() + ".vector_mem_reads")
+        .desc("Number of vector mem read insts (excluding FLAT insts).")
+        ;
+    vectorMemReadsPerWF
+        .name(name() + ".vector_mem_reads_per_wf")
+        .desc("The avg. number of vector mem read insts (excluding "
+              "FLAT insts) per-wavefront.")
+        ;
+    scalarMemWrites
+        .name(name() + ".scalar_mem_writes")
+        .desc("Number of scalar mem write insts.")
+        ;
+    scalarMemWritesPerWF
+        .name(name() + ".scalar_mem_writes_per_wf")
+        .desc("The average number of scalar mem write insts per-wavefront.")
+        ;
+    scalarMemReads
+        .name(name() + ".scalar_mem_reads")
+        .desc("Number of scalar mem read insts.")
+        ;
+    scalarMemReadsPerWF
+        .name(name() + ".scalar_mem_reads_per_wf")
+        .desc("The average number of scalar mem read insts per-wavefront.")
+        ;
+
+    vALUInstsPerWF = vALUInsts / completedWfs;
+    sALUInstsPerWF = sALUInsts / completedWfs;
+    vALUUtilization = (threadCyclesVALU / (64 * instCyclesVALU)) * 100;
+    ldsNoFlatInstsPerWF = ldsNoFlatInsts / completedWfs;
+    flatVMemInstsPerWF = flatVMemInsts / completedWfs;
+    flatLDSInstsPerWF = flatLDSInsts / completedWfs;
+    vectorMemWritesPerWF = vectorMemWrites / completedWfs;
+    vectorMemReadsPerWF = vectorMemReads / completedWfs;
+    scalarMemWritesPerWF = scalarMemWrites / completedWfs;
+    scalarMemReadsPerWF = scalarMemReads / completedWfs;
+
     tlbCycles
         .name(name() + ".tlb_cycles")
         .desc("total number of cycles for all uncoalesced requests")
@@ -1621,6 +1663,39 @@ ComputeUnit::regStats()
     // register stats of memory pipeline
     globalMemoryPipe.regStats();
     localMemoryPipe.regStats();
+}
+
+void
+ComputeUnit::updateInstStats(GPUDynInstPtr gpuDynInst)
+{
+    if (gpuDynInst->isScalar()) {
+        if (gpuDynInst->isALU() && !gpuDynInst->isWaitcnt()) {
+            sALUInsts++;
+            instCyclesSALU++;
+        } else if (gpuDynInst->isLoad()) {
+            scalarMemReads++;
+        } else if (gpuDynInst->isStore()) {
+            scalarMemWrites++;
+        }
+    } else {
+        if (gpuDynInst->isALU()) {
+            vALUInsts++;
+            instCyclesVALU++;
+            threadCyclesVALU += gpuDynInst->wavefront()->execMask().count();
+        } else if (gpuDynInst->isFlat()) {
+            if (gpuDynInst->isLocalMem()) {
+                flatLDSInsts++;
+            } else {
+                flatVMemInsts++;
+            }
+        } else if (gpuDynInst->isLocalMem()) {
+            ldsNoFlatInsts++;
+        } else if (gpuDynInst->isLoad()) {
+            vectorMemReads++;
+        } else if (gpuDynInst->isStore()) {
+            vectorMemWrites++;
+        }
+    }
 }
 
 void

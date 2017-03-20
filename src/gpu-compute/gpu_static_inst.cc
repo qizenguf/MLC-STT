@@ -36,7 +36,19 @@
 #include "gpu-compute/gpu_static_inst.hh"
 
 GPUStaticInst::GPUStaticInst(const std::string &opcode)
-    : o_type(Enums::OT_ALU), executed_as(Enums::SC_NONE), opcode(opcode),
-      _instNum(0), _scalarOp(false)
+    : executed_as(Enums::SC_NONE), opcode(opcode),
+      _instNum(0), _instAddr(0)
 {
+    setFlag(NoOrder);
+}
+
+const std::string&
+GPUStaticInst::disassemble()
+{
+    if (disassembly.empty()) {
+        generateDisassembly();
+        assert(!disassembly.empty());
+    }
+
+    return disassembly;
 }

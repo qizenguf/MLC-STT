@@ -293,7 +293,7 @@ class Cache : public BaseCache
      * list.  Return free block frame.  May return nullptr if there are
      * no replaceable blocks at the moment.
      */
-    CacheBlk *allocateBlock(Addr addr, bool is_secure, PacketList &writebacks);
+    CacheBlk *allocateBlock(Addr addr, bool is_secure, PacketList &writebacks, PacketPtr pkt);
 
     /**
      * Invalidate a cache block.

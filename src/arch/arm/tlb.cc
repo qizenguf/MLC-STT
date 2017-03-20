@@ -50,10 +50,10 @@
 
 #include "arch/arm/faults.hh"
 #include "arch/arm/pagetable.hh"
-#include "arch/arm/system.hh"
-#include "arch/arm/table_walker.hh"
 #include "arch/arm/stage2_lookup.hh"
 #include "arch/arm/stage2_mmu.hh"
+#include "arch/arm/system.hh"
+#include "arch/arm/table_walker.hh"
 #include "arch/arm/utility.hh"
 #include "base/inifile.hh"
 #include "base/str.hh"
@@ -64,6 +64,7 @@
 #include "debug/TLB.hh"
 #include "debug/TLBVerbose.hh"
 #include "mem/page_table.hh"
+#include "mem/request.hh"
 #include "params/ArmTLB.hh"
 #include "sim/full_system.hh"
 #include "sim/process.hh"
@@ -337,6 +338,13 @@ TLB::_flushMva(Addr mva, uint64_t asn, bool secure_lookup, bool hyp,
     }
 }
 
+void
+TLB::flushIpaVmid(Addr ipa, bool secure_lookup, bool hyp, uint8_t target_el)
+{
+    assert(!isStage2);
+    stage2Tlb->_flushMva(ipa, 0xbeef, secure_lookup, hyp, true, target_el);
+}
+
 bool
 TLB::checkELMatch(uint8_t target_el, uint8_t tentry_el, bool ignore_el)
 {
@@ -548,7 +556,7 @@ TLB::translateSe(RequestPtr req, ThreadContext *tc, Mode mode,
         vaddr = purifyTaggedAddr(vaddr_tainted, tc, aarch64EL, ttbcr);
     else
         vaddr = vaddr_tainted;
-    uint32_t flags = req->getFlags();
+    Request::Flags flags = req->getFlags();
 
     bool is_fetch = (mode == Execute);
     bool is_write = (mode == Write);
@@ -581,7 +589,7 @@ Fault
 TLB::checkPermissions(TlbEntry *te, RequestPtr req, Mode mode)
 {
     Addr vaddr = req->getVaddr(); // 32-bit don't have to purify
-    uint32_t flags = req->getFlags();
+    Request::Flags flags = req->getFlags();
     bool is_fetch  = (mode == Execute);
     bool is_write  = (mode == Write);
     bool is_priv   = isPriv && !(flags & UserMode);
@@ -753,7 +761,7 @@ TLB::checkPermissions64(TlbEntry *te, RequestPtr req, Mode mode,
     Addr vaddr_tainted = req->getVaddr();
     Addr vaddr = purifyTaggedAddr(vaddr_tainted, tc, aarch64EL, ttbcr);
 
-    uint32_t flags = req->getFlags();
+    Request::Flags flags = req->getFlags();
     bool is_fetch  = (mode == Execute);
     bool is_write  = (mode == Write);
     bool is_priv M5_VAR_USED  = isPriv && !(flags & UserMode);
@@ -811,7 +819,19 @@ TLB::checkPermissions64(TlbEntry *te, RequestPtr req, Mode mode,
                         "w:%d, x:%d\n", ap, xn, pxn, r, w, x);
 
     if (isStage2) {
-        panic("Virtualization in AArch64 state is not supported yet");
+        assert(ArmSystem::haveVirtualization(tc) && aarch64EL != EL2);
+        // In stage 2 we use the hypervisor access permission bits.
+        // The following permissions are described in ARM DDI 0487A.f
+        // D4-1802
+        uint8_t hap = 0x3 & te->hap;
+        if (is_fetch) {
+            // sctlr.wxn overrides the xn bit
+            grant = !sctlr.wxn && !xn;
+        } else if (is_write) {
+            grant = hap & 0x2;
+        } else { // is_read
+            grant = hap & 0x1;
+        }
     } else {
         switch (aarch64EL) {
           case EL0:
@@ -948,7 +968,7 @@ TLB::translateFs(RequestPtr req, ThreadContext *tc, Mode mode,
         vaddr = purifyTaggedAddr(vaddr_tainted, tc, aarch64EL, ttbcr);
     else
         vaddr = vaddr_tainted;
-    uint32_t flags = req->getFlags();
+    Request::Flags flags = req->getFlags();
 
     bool is_fetch  = (mode == Execute);
     bool is_write  = (mode == Write);
@@ -962,7 +982,7 @@ TLB::translateFs(RequestPtr req, ThreadContext *tc, Mode mode,
             isPriv, flags & UserMode, isSecure, tranType & S1S2NsTran);
 
     DPRINTF(TLB, "translateFs addr %#x, mode %d, st2 %d, scr %#x sctlr %#x "
-                 "flags %#x tranType 0x%x\n", vaddr_tainted, mode, isStage2,
+                 "flags %#lx tranType 0x%x\n", vaddr_tainted, mode, isStage2,
                  scr, sctlr, flags, tranType);
 
     if ((req->isInstFetch() && (!sctlr.i)) ||
@@ -1208,7 +1228,30 @@ TLB::updateMiscReg(ThreadContext *tc, ArmTranslationType tranType)
         (opModeToEL(op_mode) == EL0 && ELIs64(tc, EL1));
 
     if (aarch64) {  // AArch64
-        aarch64EL = (ExceptionLevel) (uint8_t) cpsr.el;
+        // determine EL we need to translate in
+        switch (tranType) {
+            case S1E0Tran:
+            case S12E0Tran:
+                aarch64EL = EL0;
+                break;
+            case S1E1Tran:
+            case S12E1Tran:
+                aarch64EL = EL1;
+                break;
+            case S1E2Tran:
+                aarch64EL = EL2;
+                break;
+            case S1E3Tran:
+                aarch64EL = EL3;
+                break;
+            case NormalTran:
+            case S1CTran:
+            case S1S2NsTran:
+            case HypMode:
+                aarch64EL = (ExceptionLevel) (uint8_t) cpsr.el;
+                break;
+        }
+
         switch (aarch64EL) {
           case EL0:
           case EL1:
@@ -1233,14 +1276,28 @@ TLB::updateMiscReg(ThreadContext *tc, ArmTranslationType tranType)
             asid = -1;
             break;
         }
+        hcr = tc->readMiscReg(MISCREG_HCR_EL2);
         scr = tc->readMiscReg(MISCREG_SCR_EL3);
         isPriv = aarch64EL != EL0;
-        // @todo: modify this behaviour to support Virtualization in
-        // AArch64
-        vmid           = 0;
-        isHyp          = false;
-        directToStage2 = false;
-        stage2Req      = false;
+        if (haveVirtualization) {
+            vmid           = bits(tc->readMiscReg(MISCREG_VTTBR_EL2), 55, 48);
+            isHyp  =  tranType & HypMode;
+            isHyp &= (tranType & S1S2NsTran) == 0;
+            isHyp &= (tranType & S1CTran)    == 0;
+            // Work out if we should skip the first stage of translation and go
+            // directly to stage 2. This value is cached so we don't have to
+            // compute it for every translation.
+            stage2Req = isStage2 ||
+                        (hcr.vm && !isHyp && !isSecure &&
+                         !(tranType & S1CTran) && (aarch64EL < EL2) &&
+                         !(tranType & S1E1Tran)); // <--- FIX THIS HACK
+            directToStage2 = !isStage2 && stage2Req && !sctlr.m;
+        } else {
+            vmid           = 0;
+            isHyp          = false;
+            directToStage2 = false;
+            stage2Req      = false;
+        }
     } else {  // AArch32
         sctlr  = tc->readMiscReg(flattenMiscRegNsBanked(MISCREG_SCTLR, tc,
                                  !isSecure));
@@ -1335,7 +1392,7 @@ TLB::getTE(TlbEntry **te, RequestPtr req, ThreadContext *tc, Mode mode,
         Fault fault;
         fault = tableWalker->walk(req, tc, asid, vmid, isHyp, mode,
                                   translation, timing, functional, is_secure,
-                                  tranType);
+                                  tranType, stage2Req);
         // for timing mode, return and wait for table walk,
         if (timing || fault != NoFault) {
             return fault;
@@ -1362,6 +1419,25 @@ TLB::getResultTe(TlbEntry **te, RequestPtr req, ThreadContext *tc, Mode mode,
         TlbEntry *mergeTe)
 {
     Fault fault;
+
+    if (isStage2) {
+        // We are already in the stage 2 TLB. Grab the table entry for stage
+        // 2 only. We are here because stage 1 translation is disabled.
+        TlbEntry *s2Te = NULL;
+        // Get the stage 2 table entry
+        fault = getTE(&s2Te, req, tc, mode, translation, timing, functional,
+                      isSecure, curTranType);
+        // Check permissions of stage 2
+        if ((s2Te != NULL) && (fault = NoFault)) {
+            if(aarch64)
+                fault = checkPermissions64(s2Te, req, mode, tc);
+            else
+                fault = checkPermissions(s2Te, req, mode);
+        }
+        *te = s2Te;
+        return fault;
+    }
+
     TlbEntry *s1Te = NULL;
 
     Addr vaddr_tainted = req->getVaddr();
@@ -1423,7 +1499,7 @@ TLB::setTestInterface(SimObject *_ti)
 Fault
 TLB::testTranslation(RequestPtr req, Mode mode, TlbEntry::DomainType domain)
 {
-    if (!test) {
+    if (!test || !req->hasSize() || req->getSize() == 0) {
         return NoFault;
     } else {
         return test->translationCheck(req, isPriv, mode, domain);

@@ -41,6 +41,8 @@
  * Authors: Nathan Binkert
  */
 
+#include "sim/pseudo_inst.hh"
+
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -50,9 +52,9 @@
 #include <vector>
 
 #include "arch/kernel_stats.hh"
+#include "arch/pseudo_inst.hh"
 #include "arch/utility.hh"
 #include "arch/vtophys.hh"
-#include "arch/pseudo_inst.hh"
 #include "base/debug.hh"
 #include "base/output.hh"
 #include "config/the_isa.hh"
@@ -68,7 +70,6 @@
 #include "sim/full_system.hh"
 #include "sim/initparam_keys.hh"
 #include "sim/process.hh"
-#include "sim/pseudo_inst.hh"
 #include "sim/serialize.hh"
 #include "sim/sim_events.hh"
 #include "sim/sim_exit.hh"
@@ -211,6 +212,11 @@ pseudoInst(ThreadContext *tc, uint8_t func, uint8_t subfunc)
         m5PageFault(tc);
         break;
 
+      /* dist-gem5 functions */
+      case 0x62: // distToggleSync_func
+        togglesync(tc);
+        break;
+
       default:
         warn("Unhandled m5 op: 0x%x\n", func);
         break;
@@ -234,105 +240,34 @@ void
 quiesce(ThreadContext *tc)
 {
     DPRINTF(PseudoInst, "PseudoInst::quiesce()\n");
-    if (!FullSystem)
-        panicFsOnlyPseudoInst("quiesce");
-
-    if (!tc->getCpuPtr()->params()->do_quiesce)
-        return;
-
-    DPRINTF(Quiesce, "%s: quiesce()\n", tc->getCpuPtr()->name());
-
-    tc->suspend();
-    if (tc->getKernelStats())
-        tc->getKernelStats()->quiesce();
+    tc->quiesce();
 }
 
 void
 quiesceSkip(ThreadContext *tc)
 {
     DPRINTF(PseudoInst, "PseudoInst::quiesceSkip()\n");
-    if (!FullSystem)
-        panicFsOnlyPseudoInst("quiesceSkip");
-
-    BaseCPU *cpu = tc->getCpuPtr();
-
-    if (!cpu->params()->do_quiesce)
-        return;
-
-    EndQuiesceEvent *quiesceEvent = tc->getQuiesceEvent();
-
-    Tick resume = curTick() + 1;
-
-    cpu->reschedule(quiesceEvent, resume, true);
-
-    DPRINTF(Quiesce, "%s: quiesceSkip() until %d\n",
-            cpu->name(), resume);
-
-    tc->suspend();
-    if (tc->getKernelStats())
-        tc->getKernelStats()->quiesce();
+    tc->quiesceTick(tc->getCpuPtr()->nextCycle() + 1);
 }
 
 void
 quiesceNs(ThreadContext *tc, uint64_t ns)
 {
     DPRINTF(PseudoInst, "PseudoInst::quiesceNs(%i)\n", ns);
-    if (!FullSystem)
-        panicFsOnlyPseudoInst("quiesceNs");
-
-    BaseCPU *cpu = tc->getCpuPtr();
-
-    if (!cpu->params()->do_quiesce)
-        return;
-
-    EndQuiesceEvent *quiesceEvent = tc->getQuiesceEvent();
-
-    Tick resume = curTick() + SimClock::Int::ns * ns;
-
-    cpu->reschedule(quiesceEvent, resume, true);
-
-    DPRINTF(Quiesce, "%s: quiesceNs(%d) until %d\n",
-            cpu->name(), ns, resume);
-
-    tc->suspend();
-    if (tc->getKernelStats())
-        tc->getKernelStats()->quiesce();
+    tc->quiesceTick(curTick() + SimClock::Int::ns * ns);
 }
 
 void
 quiesceCycles(ThreadContext *tc, uint64_t cycles)
 {
     DPRINTF(PseudoInst, "PseudoInst::quiesceCycles(%i)\n", cycles);
-    if (!FullSystem)
-        panicFsOnlyPseudoInst("quiesceCycles");
-
-    BaseCPU *cpu = tc->getCpuPtr();
-
-    if (!cpu->params()->do_quiesce)
-        return;
-
-    EndQuiesceEvent *quiesceEvent = tc->getQuiesceEvent();
-
-    Tick resume = cpu->clockEdge(Cycles(cycles));
-
-    cpu->reschedule(quiesceEvent, resume, true);
-
-    DPRINTF(Quiesce, "%s: quiesceCycles(%d) until %d\n",
-            cpu->name(), cycles, resume);
-
-    tc->suspend();
-    if (tc->getKernelStats())
-        tc->getKernelStats()->quiesce();
+    tc->quiesceTick(tc->getCpuPtr()->clockEdge(Cycles(cycles)));
 }
 
 uint64_t
 quiesceTime(ThreadContext *tc)
 {
     DPRINTF(PseudoInst, "PseudoInst::quiesceTime()\n");
-    if (!FullSystem) {
-        panicFsOnlyPseudoInst("quiesceTime");
-        return 0;
-    }
 
     return (tc->readLastActivate() - tc->readLastSuspend()) /
         SimClock::Int::ns;
@@ -643,6 +578,13 @@ switchcpu(ThreadContext *tc)
 {
     DPRINTF(PseudoInst, "PseudoInst::switchcpu()\n");
     exitSimLoop("switchcpu");
+}
+
+void
+togglesync(ThreadContext *tc)
+{
+    DPRINTF(PseudoInst, "PseudoInst::togglesync()\n");
+    DistIface::toggleSync(tc);
 }
 
 //

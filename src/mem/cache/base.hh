@@ -273,13 +273,19 @@ class BaseCache : public MemObject
 
     /** The latency to fill a cache block */
     const Cycles fillLatency;
-
+    
+	/** The latency of a write in this device.
+     */
+    const Cycles writeLatency;
+    
     /**
      * The latency of sending reponse to its upper level cache/core on
      * a linefill. The responseLatency parameter captures this
      * latency.
      */
     const Cycles responseLatency;
+    
+
 
     /** The number of targets for each MSHR. */
     const int numTarget;

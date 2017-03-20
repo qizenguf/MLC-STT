@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2010-2013 ARM Limited
+ * Copyright (c) 2010-2013, 2016 ARM Limited
  * All rights reserved
  *
  * The license below extends only to copyright in the software and shall
@@ -127,7 +127,17 @@ class TLB : public BaseTLB
         HypMode = 0x2,
         // Secure code operating as if it wasn't (required by some Address
         // Translate operations)
-        S1S2NsTran = 0x4
+        S1S2NsTran = 0x4,
+        // Address translation instructions (eg AT S1E0R_Xt) need to be handled
+        // in special ways during translation because they could need to act
+        // like a different EL than the current EL. The following flags are
+        // for these instructions
+        S1E0Tran = 0x8,
+        S1E1Tran = 0x10,
+        S1E2Tran = 0x20,
+        S1E3Tran = 0x40,
+        S12E0Tran = 0x80,
+        S12E1Tran = 0x100
     };
   protected:
     TlbEntry* table;     // the Page Table
@@ -264,6 +274,19 @@ class TLB : public BaseTLB
      * @param hyp if the operation affects hyp mode
      */
     void flushMva(Addr mva, bool secure_lookup, bool hyp, uint8_t target_el);
+
+    /**
+     * Invalidate all entries in the stage 2 TLB that match the given ipa
+     * and the current VMID
+     * @param ipa the address to invalidate
+     * @param secure_lookup if the operation affects the secure world
+     * @param hyp if the operation affects hyp mode
+     */
+    void flushIpaVmid(Addr ipa, bool secure_lookup, bool hyp, uint8_t target_el);
+
+    Fault trickBoxCheck(RequestPtr req, Mode mode, TlbEntry::DomainType domain);
+    Fault walkTrickBoxCheck(Addr pa, bool is_secure, Addr va, Addr sz, bool is_exec,
+            bool is_write, TlbEntry::DomainType domain, LookupLevel lookup_level);
 
     void printTlb() const;
 

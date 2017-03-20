@@ -30,9 +30,10 @@
 
 #include "debug/RubyQueue.hh"
 #include "mem/protocol/MemoryMsg.hh"
+#include "mem/ruby/network/Network.hh"
+#include "mem/ruby/system/GPUCoalescer.hh"
 #include "mem/ruby/system/RubySystem.hh"
 #include "mem/ruby/system/Sequencer.hh"
-#include "mem/ruby/system/GPUCoalescer.hh"
 #include "sim/system.hh"
 
 AbstractController::AbstractController(const Params *p)
@@ -278,8 +279,7 @@ AbstractController::queueMemoryWritePartial(const MachineID &id, Addr addr,
                                             Cycles latency,
                                             const DataBlock &block, int size)
 {
-    RequestPtr req = new Request(addr, RubySystem::getBlockSizeBytes(), 0,
-                                 m_masterId);
+    RequestPtr req = new Request(addr, size, 0, m_masterId);
 
     PacketPtr pkt = Packet::createWrite(req);
     uint8_t *newData = new uint8_t[size];

@@ -305,7 +305,7 @@ GpuDispatcher::exec()
 void
 GpuDispatcher::notifyWgCompl(Wavefront *w)
 {
-    int kern_id = w->kern_id;
+    int kern_id = w->kernId;
     DPRINTF(GPUDisp, "notify WgCompl %d\n",kern_id);
     assert(ndRangeMap[kern_id].dispatchId == kern_id);
     ndRangeMap[kern_id].numWgCompleted++;
@@ -397,4 +397,10 @@ void
 GpuDispatcher::setFuncargsSize(int funcargs_size)
 {
     shader->funcargs_size = funcargs_size;
+}
+
+uint32_t
+GpuDispatcher::getStaticContextSize() const
+{
+    return shader->cuList[0]->wfList[0][0]->getStaticContextSize();
 }

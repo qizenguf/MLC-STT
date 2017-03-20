@@ -29,8 +29,9 @@
  *          Ali Saidi
  */
 
-#include "arch/alpha/isa_traits.hh"
 #include "arch/alpha/process.hh"
+
+#include "arch/alpha/isa_traits.hh"
 #include "base/loader/elf_object.hh"
 #include "base/loader/object_file.hh"
 #include "base/misc.hh"
@@ -39,6 +40,7 @@
 #include "mem/page_table.hh"
 #include "sim/byteswap.hh"
 #include "sim/process_impl.hh"
+#include "sim/syscall_return.hh"
 #include "sim/system.hh"
 
 using namespace AlphaISA;
@@ -177,7 +179,7 @@ void
 AlphaLiveProcess::setupASNReg()
 {
     ThreadContext *tc = system->getThreadContext(contextIds[0]);
-    tc->setMiscRegNoEffect(IPR_DTB_ASN, M5_pid << 57);
+    tc->setMiscRegNoEffect(IPR_DTB_ASN, _pid << 57);
 }
 
 
@@ -185,7 +187,7 @@ void
 AlphaLiveProcess::loadState(CheckpointIn &cp)
 {
     LiveProcess::loadState(cp);
-    // need to set up ASN after unserialization since M5_pid value may
+    // need to set up ASN after unserialization since _pid value may
     // come from checkpoint
     setupASNReg();
 }

@@ -42,10 +42,11 @@
  *          Ali Saidi
  */
 
+#include "arch/x86/process.hh"
+
+#include "arch/x86/isa_traits.hh"
 #include "arch/x86/regs/misc.hh"
 #include "arch/x86/regs/segment.hh"
-#include "arch/x86/isa_traits.hh"
-#include "arch/x86/process.hh"
 #include "arch/x86/system.hh"
 #include "arch/x86/types.hh"
 #include "base/loader/elf_object.hh"
@@ -57,7 +58,8 @@
 #include "mem/multi_level_page_table.hh"
 #include "mem/page_table.hh"
 #include "sim/process_impl.hh"
-#include "sim/syscall_emul.hh"
+#include "sim/syscall_desc.hh"
+#include "sim/syscall_return.hh"
 #include "sim/system.hh"
 
 using namespace std;
@@ -73,7 +75,10 @@ static const int ArgumentReg[] = {
     INTREG_R8W,
     INTREG_R9W
 };
-static const int NumArgumentRegs = sizeof(ArgumentReg) / sizeof(const int);
+
+static const int NumArgumentRegs M5_VAR_USED =
+    sizeof(ArgumentReg) / sizeof(const int);
+
 static const int ArgumentReg32[] = {
     INTREG_EBX,
     INTREG_ECX,
@@ -82,7 +87,9 @@ static const int ArgumentReg32[] = {
     INTREG_EDI,
     INTREG_EBP
 };
-static const int NumArgumentRegs32 = sizeof(ArgumentReg) / sizeof(const int);
+
+static const int NumArgumentRegs32 M5_VAR_USED =
+    sizeof(ArgumentReg) / sizeof(const int);
 
 X86LiveProcess::X86LiveProcess(LiveProcessParams * params, ObjectFile *objFile,
         SyscallDesc *_syscallDescs, int _numSyscallDescs) :

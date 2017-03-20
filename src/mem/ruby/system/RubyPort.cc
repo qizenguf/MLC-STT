@@ -39,13 +39,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "mem/ruby/system/RubyPort.hh"
+
 #include "cpu/testers/rubytest/RubyTester.hh"
 #include "debug/Config.hh"
 #include "debug/Drain.hh"
 #include "debug/Ruby.hh"
 #include "mem/protocol/AccessPermission.hh"
 #include "mem/ruby/slicc_interface/AbstractController.hh"
-#include "mem/ruby/system/RubyPort.hh"
 #include "mem/simple_mem.hh"
 #include "sim/full_system.hh"
 #include "sim/system.hh"
@@ -312,9 +313,10 @@ RubyPort::MemSlavePort::recvFunctional(PacketPtr pkt)
     // Check for pio requests and directly send them to the dedicated
     // pio port.
     if (!isPhysMemAddress(pkt->getAddr())) {
-        assert(rp->memMasterPort.isConnected());
         DPRINTF(RubyPort, "Pio Request for address: 0x%#x\n", pkt->getAddr());
-        panic("RubyPort::PioMasterPort::recvFunctional() not implemented!\n");
+        assert(rp->pioMasterPort.isConnected());
+        rp->pioMasterPort.sendFunctional(pkt);
+        return;
     }
 
     assert(pkt->getAddr() + pkt->getSize() <=

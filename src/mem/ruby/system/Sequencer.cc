@@ -26,6 +26,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "mem/ruby/system/Sequencer.hh"
+
 #include "arch/x86/ldstflags.hh"
 #include "base/misc.hh"
 #include "base/str.hh"
@@ -34,13 +36,12 @@
 #include "debug/ProtocolTrace.hh"
 #include "debug/RubySequencer.hh"
 #include "debug/RubyStats.hh"
+#include "mem/packet.hh"
 #include "mem/protocol/PrefetchBit.hh"
 #include "mem/protocol/RubyAccessMode.hh"
 #include "mem/ruby/profiler/Profiler.hh"
 #include "mem/ruby/slicc_interface/RubyRequest.hh"
 #include "mem/ruby/system/RubySystem.hh"
-#include "mem/ruby/system/Sequencer.hh"
-#include "mem/packet.hh"
 #include "sim/system.hh"
 
 using namespace std;
@@ -71,7 +72,7 @@ Sequencer::Sequencer(const Params *p)
     assert(m_data_cache_hit_latency > 0);
     assert(m_inst_cache_hit_latency > 0);
 
-    m_usingNetworkTester = p->using_network_tester;
+    m_runningGarnetStandalone = p->garnet_standalone;
 }
 
 Sequencer::~Sequencer()
@@ -386,10 +387,10 @@ Sequencer::writeCallback(Addr address, DataBlock& data,
     // For Alpha, properly handle LL, SC, and write requests with respect to
     // locked cache blocks.
     //
-    // Not valid for Network_test protocl
+    // Not valid for Garnet_standalone protocl
     //
     bool success = true;
-    if (!m_usingNetworkTester)
+    if (!m_runningGarnetStandalone)
         success = handleLlsc(address, request);
 
     // Handle SLICC block_on behavior for Locked_RMW accesses. NOTE: the

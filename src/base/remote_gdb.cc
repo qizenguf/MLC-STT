@@ -119,16 +119,17 @@
  * "Stub" to allow remote cpu to debug over a serial line using gdb.
  */
 
-#include <signal.h>
+#include "base/remote_gdb.hh"
+
 #include <sys/signal.h>
 #include <unistd.h>
 
+#include <csignal>
 #include <cstdio>
 #include <string>
 
 #include "arch/vtophys.hh"
 #include "base/intmath.hh"
-#include "base/remote_gdb.hh"
 #include "base/socket.hh"
 #include "base/trace.hh"
 #include "config/the_isa.hh"
@@ -136,8 +137,8 @@
 #include "cpu/static_inst.hh"
 #include "cpu/thread_context.hh"
 #include "debug/GDBAll.hh"
-#include "mem/port.hh"
 #include "mem/fs_translating_port_proxy.hh"
+#include "mem/port.hh"
 #include "mem/se_translating_port_proxy.hh"
 #include "sim/full_system.hh"
 #include "sim/system.hh"
@@ -249,6 +250,12 @@ BaseRemoteGDB::InputEvent::InputEvent(BaseRemoteGDB *g, int fd, int e)
 void
 BaseRemoteGDB::InputEvent::process(int revent)
 {
+    if (gdb->trapEvent.scheduled()) {
+        warn("GDB trap event has already been scheduled! "
+             "Ignoring this input event.");
+        return;
+    }
+
     if (revent & POLLIN) {
         gdb->trapEvent.type(SIGILL);
         gdb->scheduleInstCommitEvent(&gdb->trapEvent, 0);

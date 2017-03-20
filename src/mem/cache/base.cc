@@ -53,6 +53,7 @@
 #include "mem/cache/mshr.hh"
 #include "mem/cache/tags/fa_lru.hh"
 #include "mem/cache/tags/lru.hh"
+#include "mem/cache/tags/car.hh"
 #include "mem/cache/tags/random_repl.hh"
 #include "sim/full_system.hh"
 
@@ -75,6 +76,7 @@ BaseCache::BaseCache(const BaseCacheParams *p, unsigned blk_size)
       lookupLatency(p->hit_latency),
       forwardLatency(p->hit_latency),
       fillLatency(p->response_latency),
+      writeLatency(p->write_latency),
       responseLatency(p->response_latency),
       numTarget(p->tgts_per_mshr),
       forwardSnoops(true),
